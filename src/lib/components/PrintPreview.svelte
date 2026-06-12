@@ -1,24 +1,29 @@
 <script lang="ts">
-	import { rotStepFor, leaves, type Board, type Mode, type Region, type Pt } from '$lib/grid';
+	import { rotStepFor, leaves, type Board, type Mode, type Region, type Pt, type MergeGroup } from '$lib/grid';
 
 	let {
 		board,
 		mode,
 		rotation,
 		design,
+		merges,
 		onClose
 	}: {
 		board: Board;
 		mode: Mode;
 		rotation: number;
 		design: Map<string, Region>;
+		merges: Map<string, MergeGroup>;
 		onClose: () => void;
 	} = $props();
 
-	// Every leaf face on the board (subdivided cells contribute multiple).
+	// Every leaf face: merge outlines + non-consumed cells' subdivisions.
 	const faces = $derived.by(() => {
+		const consumed = new Set([...merges.values()].flatMap((g) => g.cellIds));
 		const out: { id: string; poly: Pt[] }[] = [];
+		for (const g of merges.values()) out.push({ id: g.id, poly: g.poly });
 		for (const cell of board.cells) {
+			if (consumed.has(cell.id)) continue;
 			const region = design.get(cell.id);
 			if (!region) out.push({ id: cell.id, poly: cell.poly });
 			else leaves(region).forEach((lf, k) => out.push({ id: `${cell.id}#${k}`, poly: lf.poly }));
@@ -121,15 +126,9 @@
 			<svg viewBox="0 0 {pageW} {pageH}" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
 				<rect width={pageW} height={pageH} fill="white" />
 				<g transform="translate({(pageW - A4_W) / 2 + fit.x} {(pageH - A4_H) / 2 + fit.y}) scale({fit.scale}) rotate({printRot} {board.w / 2} {board.h / 2})">
-					{#if view === 'blank'}
-						{#each board.cells as cell (cell.id)}
-							<polygon points={pts(cell.poly)} fill="white" stroke="black" stroke-width={0.4 / fit.scale} />
-						{/each}
-					{:else}
-						{#each faces as face (face.id)}
-							<polygon points={pts(face.poly)} fill="white" stroke="black" stroke-width={0.45 / fit.scale} />
-						{/each}
-					{/if}
+					{#each faces as face (face.id)}
+						<polygon points={pts(face.poly)} fill="white" stroke="black" stroke-width={(view === 'blank' ? 0.4 : 0.45) / fit.scale} />
+					{/each}
 				</g>
 			</svg>
 		</div>

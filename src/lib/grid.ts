@@ -408,3 +408,70 @@ export function findLeaf(region: Region, x: number, y: number): Region | null {
 	}
 	return null;
 }
+
+// ---- Merge: fuse connected whole cells into one region ----
+
+export interface MergeGroup {
+	id: string;
+	cellIds: string[];
+	poly: Pt[];
+}
+
+function vkey(p: Pt): string {
+	return `${p[0].toFixed(2)},${p[1].toFixed(2)}`;
+}
+
+/**
+ * Boundary ring of a set of edge-adjacent polygons, or null if they don't form
+ * exactly one simple connected region (disconnected, or touching only at a
+ * vertex, or enclosing a hole). Works by cancelling shared internal edges and
+ * stitching the surviving boundary edges into a single ring.
+ */
+export function unionOutline(polys: Pt[][]): Pt[] | null {
+	const edges = new Map<string, [Pt, Pt]>();
+	const ek = (a: Pt, b: Pt) => `${vkey(a)}>${vkey(b)}`;
+	for (const poly of polys) {
+		for (let i = 0; i < poly.length; i++) {
+			const a = poly[i], b = poly[(i + 1) % poly.length];
+			const rev = ek(b, a);
+			if (edges.has(rev)) edges.delete(rev);
+			else edges.set(ek(a, b), [a, b]);
+		}
+	}
+	if (edges.size === 0) return null;
+
+	const next = new Map<string, Pt>();
+	for (const [a, b] of edges.values()) next.set(vkey(a), b);
+
+	const first = edges.values().next().value as [Pt, Pt];
+	const start = first[0];
+	const ring: Pt[] = [];
+	let cur = start, guard = 0;
+	do {
+		ring.push(cur);
+		const nb = next.get(vkey(cur));
+		if (!nb) return null;
+		cur = nb;
+		if (++guard > 100000) return null;
+	} while (vkey(cur) !== vkey(start));
+
+	if (ring.length !== edges.size) return null; // more than one ring → reject
+	return ring;
+}
+
+/** General (non-convex) point-in-polygon via ray casting, for merged regions. */
+export function pointInPolyGeneral(px: number, py: number, poly: Pt[]): boolean {
+	let inside = false;
+	for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+		const [xi, yi] = poly[i];
+		const [xj, yj] = poly[j];
+		if ((yi > py) !== (yj > py) && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) {
+			inside = !inside;
+		}
+	}
+	return inside;
+}
+
+export function mergeId(cellIds: string[]): string {
+	return `m:${[...cellIds].sort().join('|')}`;
+}

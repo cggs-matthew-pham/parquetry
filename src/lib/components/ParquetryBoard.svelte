@@ -1,29 +1,34 @@
 <script lang="ts">
-	import { SvelteMap } from 'svelte/reactivity';
+	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 	import {
-		buildBoard, pointInPoly, rotatedViewBox, rotStepFor, polyCentroid,
+		buildBoard, pointInPoly, pointInPolyGeneral, rotatedViewBox, rotStepFor, polyCentroid,
 		makeRoot, seedRegion, applyTool, leaves, previewTool, findLeaf, toolsForMode,
+		unionOutline, mergeId,
 		MODES,
-		type Mode, type Cell, type Tool, type Division, type Region, type Pt
+		type Mode, type Cell, type Tool, type Division, type Region, type Pt, type MergeGroup
 	} from '$lib/grid';
 	import PrintPreview from './PrintPreview.svelte';
 
 	const PAD = 14;
+	type EditMode = 'subdivide' | 'merge';
 
 	// ---- State ----
-	let mode = $state<Mode>('square');
+	let mode = $state<Mode>('square');         // grid tessellation
+	let editMode = $state<EditMode>('subdivide'); // working mode
 	let rotation = $state(0);
 	let tool = $state<Tool>('half');
-	let halfAxis = $state<'h' | 'v'>('h'); // resolved live from cursor for the Half tool
+	let halfAxis = $state<'h' | 'v'>('h');
 	let showPrint = $state(false);
 
-	// Mode-independent persistence: each mode keeps its own design — a map of
-	// cell id -> region tree. Absent = undivided.
+	// Per-mode persistence: subdivisions and merges, each keyed by the grid mode.
 	const designs: Record<Mode, SvelteMap<string, Region>> = {
-		square: new SvelteMap(),
-		tall: new SvelteMap(),
-		flat: new SvelteMap()
+		square: new SvelteMap(), tall: new SvelteMap(), flat: new SvelteMap()
 	};
+	const mergeGroups: Record<Mode, SvelteMap<string, MergeGroup>> = {
+		square: new SvelteMap(), tall: new SvelteMap(), flat: new SvelteMap()
+	};
+	// Transient merge selection (cleared on commit / mode switch).
+	const selection = new SvelteSet<string>();
 
 	let hover = $state<{ x: number; y: number } | null>(null);
 	let svgEl: SVGSVGElement;
@@ -36,21 +41,38 @@
 	const pivotY = $derived(board.h / 2);
 	const rotStep = $derived(rotStepFor(mode));
 	const design = $derived(designs[mode]);
+	const merges = $derived(mergeGroups[mode]);
 	const tools = $derived(toolsForMode(mode));
 
-	// A render-ready list of every leaf face on the board.
+	// Cells consumed by a merge group → not rendered/handled individually.
+	const consumed = $derived(
+		new Set([...merges.values()].flatMap((g) => g.cellIds))
+	);
+
+	// All leaf faces: merge-group outlines + non-consumed cells' subdivisions.
 	const faces = $derived.by(() => {
 		const out: { id: string; poly: Pt[] }[] = [];
+		for (const g of merges.values()) out.push({ id: g.id, poly: g.poly });
 		for (const cell of board.cells) {
+			if (consumed.has(cell.id)) continue;
 			const region = design.get(cell.id);
-			if (!region) {
-				out.push({ id: cell.id, poly: cell.poly });
-			} else {
-				leaves(region).forEach((lf, k) => out.push({ id: `${cell.id}#${k}`, poly: lf.poly }));
-			}
+			if (!region) out.push({ id: cell.id, poly: cell.poly });
+			else leaves(region).forEach((lf, k) => out.push({ id: `${cell.id}#${k}`, poly: lf.poly }));
 		}
 		return out;
 	});
+
+	// A cell can join a merge if it's a full cell, not subdivided, not consumed.
+	function eligible(cell: Cell): boolean {
+		return cell.kind === 'cell' && !consumed.has(cell.id) && !design.has(cell.id);
+	}
+
+	const selectionUnion = $derived.by(() => {
+		if (selection.size < 2) return null;
+		const polys = board.cells.filter((c) => selection.has(c.id)).map((c) => c.poly);
+		return unionOutline(polys);
+	});
+	const canMerge = $derived(selectionUnion !== null);
 
 	// ---- Mode + rotation ----
 	function setMode(m: Mode) {
@@ -59,15 +81,24 @@
 		const step = rotStepFor(m);
 		rotation = (Math.round(rotation / step) * step) % 360;
 		if (!tools.some((t) => t.id === tool)) tool = 'half';
+		selection.clear();
 	}
 
-	function rotateBy(d: number) {
-		rotation = (((rotation + d) % 360) + 360) % 360;
+	function setEditMode(em: EditMode) {
+		editMode = em;
+		selection.clear();
 	}
+
+	function rotateBy(d: number) { rotation = (((rotation + d) % 360) + 360) % 360; }
 	function resetRotation() { rotation = 0; }
-	function clearBoard() { design.clear(); }
 
-	// ---- Tool cycling (keyboard + wheel) ----
+	function clearBoard() {
+		design.clear();
+		merges.clear();
+		selection.clear();
+	}
+
+	// ---- Tool cycling (subdivide mode only) ----
 	function cycleTool(dir: number) {
 		const ids = tools.map((t) => t.id);
 		const i = ids.indexOf(tool);
@@ -77,6 +108,7 @@
 	function handleKey(e: KeyboardEvent) {
 		const t = e.target as HTMLElement;
 		if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return;
+		if (editMode !== 'subdivide') return;
 		if (e.key >= '1' && e.key <= '9') {
 			const i = Number(e.key) - 1;
 			if (i < tools.length) { tool = tools[i].id; e.preventDefault(); }
@@ -87,7 +119,11 @@
 	$effect(() => {
 		const el = svgEl;
 		if (!el) return;
-		const onWheel = (e: WheelEvent) => { e.preventDefault(); cycleTool(e.deltaY > 0 ? 1 : -1); };
+		const onWheel = (e: WheelEvent) => {
+			if (editMode !== 'subdivide') return;
+			e.preventDefault();
+			cycleTool(e.deltaY > 0 ? 1 : -1);
+		};
 		el.addEventListener('wheel', onWheel, { passive: false });
 		return () => el.removeEventListener('wheel', onWheel);
 	});
@@ -108,20 +144,20 @@
 		return null;
 	}
 
-	// Resolve the UI tool to an actual geometric division. For 'half', use the
-	// live hover-resolved axis; for the others it's direct.
+	function mergeAt(x: number, y: number): MergeGroup | null {
+		for (const g of merges.values()) if (pointInPolyGeneral(x, y, g.poly)) return g;
+		return null;
+	}
+
 	function divisionFor(t: Exclude<Tool, 'whole'>): Division {
 		if (t === 'half') return halfAxis === 'h' ? 'half-h' : 'half-v';
 		return t;
 	}
 
-	// Update the Half axis from cursor position, but only when hovering an
-	// undivided full cell (a half/quarter/edge has a forced or no cut). A small
-	// margin gives hysteresis so the preview doesn't flicker near the diagonal.
 	function updateHalfAxis(x: number, y: number, cell: Cell) {
 		const region = design.get(cell.id) ?? seedRegion(cell);
 		const leaf = findLeaf(region, x, y);
-		if (!leaf || !leaf.root) return; // only undivided full cells have a choice
+		if (!leaf || !leaf.root) return;
 		const [lx, ly] = polyCentroid(leaf.poly);
 		const dx = Math.abs(x - lx), dy = Math.abs(y - ly);
 		if (dy > dx * 1.15) halfAxis = 'h';
@@ -131,55 +167,75 @@
 	function handleMove(e: PointerEvent) {
 		const p = localPoint(e);
 		hover = p;
-		if (tool === 'half') {
+		if (editMode === 'subdivide' && tool === 'half') {
 			const cell = cellAt(p.x, p.y);
-			if (cell) updateHalfAxis(p.x, p.y, cell);
+			if (cell && !consumed.has(cell.id)) updateHalfAxis(p.x, p.y, cell);
 		}
 	}
 
 	function handleClick(e: PointerEvent) {
 		const { x, y } = localPoint(e);
-		const cell = cellAt(x, y);
-		if (!cell) return;
 
-		if (tool === 'whole') {
-			design.delete(cell.id); // reset whole cell
+		if (editMode === 'merge') {
+			const g = mergeAt(x, y);
+			if (g) { merges.delete(g.id); return; } // click a merged region → unmerge
+			const cell = cellAt(x, y);
+			if (!cell || !eligible(cell)) return;
+			if (selection.has(cell.id)) selection.delete(cell.id);
+			else selection.add(cell.id);
 			return;
 		}
-		if (tool === 'half') updateHalfAxis(x, y, cell); // ensure axis matches click point
+
+		// subdivide mode
+		const cell = cellAt(x, y);
+		if (!cell || consumed.has(cell.id)) return;
+		if (tool === 'whole') { design.delete(cell.id); return; }
+		if (tool === 'half') updateHalfAxis(x, y, cell);
 		const current = design.get(cell.id) ?? seedRegion(cell);
-		const next = applyTool(current, x, y, divisionFor(tool));
-		design.set(cell.id, next);
+		design.set(cell.id, applyTool(current, x, y, divisionFor(tool)));
 	}
 
 	function handleLeave() { hover = null; }
 
-	// ---- Preview ----
+	function commitMerge() {
+		const ring = selectionUnion;
+		if (!ring) return;
+		const ids = [...selection];
+		const id = mergeId(ids);
+		merges.set(id, { id, cellIds: ids, poly: ring });
+		selection.clear();
+	}
+
+	// ---- Preview (subdivide mode) ----
 	const preview = $derived.by((): { reset: true; poly: Pt[] }
 		| { reset: false; faces: { poly: Pt[]; active: boolean }[] }
 		| null => {
-		if (!hover) return null;
+		if (editMode !== 'subdivide' || !hover) return null;
 		const cell = cellAt(hover.x, hover.y);
-		if (!cell) return null;
-		if (tool === 'whole') {
-			return { reset: true, poly: cell.poly };
-		}
+		if (!cell || consumed.has(cell.id)) return null;
+		if (tool === 'whole') return { reset: true, poly: cell.poly };
 		const region = design.get(cell.id) ?? seedRegion(cell);
 		const result = previewTool(region, hover.x, hover.y, divisionFor(tool));
 		if (!result) return null;
-		const faces = result.map((poly) => ({ poly, active: pointInPoly(hover!.x, hover!.y, poly) }));
-		return { reset: false, faces };
+		const fs = result.map((poly) => ({ poly, active: pointInPoly(hover!.x, hover!.y, poly) }));
+		return { reset: false, faces: fs };
 	});
 
-	// Icons: subdivide a sample cell of the current mode to show each tool's result
+	// Hover highlight (merge mode): which cell/merge is under the cursor
+	const hoverCellId = $derived.by(() => {
+		if (editMode !== 'merge' || !hover) return null;
+		const cell = cellAt(hover.x, hover.y);
+		return cell && eligible(cell) ? cell.id : null;
+	});
+
+	// Tool icons from live mode geometry
 	function toolIcon(t: Tool): Pt[][] {
 		const sample = mode === 'square'
 			? [[-30, -30], [30, -30], [30, 30], [-30, 30]] as Pt[]
 			: [[0, -34], [30, 0], [0, 34], [-30, 0]] as Pt[];
 		if (t === 'whole') return [sample];
 		const div: Division = t === 'half' ? 'half-h' : t;
-		const r = applyTool(makeRoot(sample), 0, 0, div);
-		return leaves(r).map((l) => l.poly);
+		return leaves(applyTool(makeRoot(sample), 0, 0, div)).map((l) => l.poly);
 	}
 </script>
 
@@ -204,27 +260,50 @@
 			<button class="rot-reset" onclick={resetRotation} disabled={rotation === 0}>Reset</button>
 		</div>
 
-		<h3>Subdivide</h3>
-		<div class="tool-grid">
-			{#each tools as t, idx (t.id)}
-				<button class="tool-btn" class:active={tool === t.id} onclick={() => (tool = t.id)} title="{t.label}  ({idx + 1})">
-					<svg viewBox="-38 -40 76 80" width="42" height="42">
-						<polygon points={(mode === 'square'
-							? [[-30,-30],[30,-30],[30,30],[-30,30]]
-							: [[0,-34],[30,0],[0,34],[-30,0]]).map((p) => p.join(',')).join(' ')}
-							fill="none" stroke="#ddd" stroke-width="1.5" />
-						{#each toolIcon(t.id) as f, fi (fi)}
-							<polygon points={f.map((p) => p.join(',')).join(' ')} fill="#e8e0d2" stroke="#666" stroke-width="2" />
-						{/each}
-					</svg>
-					<span>{t.label}</span>
-				</button>
-			{/each}
+		<h3>Mode</h3>
+		<div class="editmode-toggle">
+			<button class:active={editMode === 'subdivide'} onclick={() => setEditMode('subdivide')}>Subdivide</button>
+			<button class:active={editMode === 'merge'} onclick={() => setEditMode('merge')}>Merge</button>
 		</div>
-		<p class="cycle-note">
-			Click a cell to subdivide it. Click a half to split it once more. Keys 1–{tools.length},
-			← →, or scroll to switch tool. "Whole" resets a cell.
-		</p>
+
+		{#if editMode === 'subdivide'}
+			<h3>Within a cell</h3>
+			<div class="tool-grid">
+				{#each tools as t, idx (t.id)}
+					<button class="tool-btn" class:active={tool === t.id} onclick={() => (tool = t.id)} title="{t.label}  ({idx + 1})">
+						<svg viewBox="-38 -40 76 80" width="42" height="42">
+							<polygon points={(mode === 'square'
+								? [[-30,-30],[30,-30],[30,30],[-30,30]]
+								: [[0,-34],[30,0],[0,34],[-30,0]]).map((p) => p.join(',')).join(' ')}
+								fill="none" stroke="#ddd" stroke-width="1.5" />
+							{#each toolIcon(t.id) as f, fi (fi)}
+								<polygon points={f.map((p) => p.join(',')).join(' ')} fill="#e8e0d2" stroke="#666" stroke-width="2" />
+							{/each}
+						</svg>
+						<span>{t.label}</span>
+					</button>
+				{/each}
+			</div>
+			<p class="cycle-note">
+				Click a cell to subdivide it; click a half to split it once more. Keys 1–{tools.length},
+				← →, or scroll to switch tool. Whole resets a cell.
+			</p>
+		{:else}
+			<h3>Across cells</h3>
+			<p class="cycle-note">
+				Click whole cells to select them (they must connect). Then Merge fuses them into one
+				region. Click a merged region to unmerge it.
+			</p>
+			<div class="merge-actions">
+				<button class="btn-merge" disabled={!canMerge} onclick={commitMerge}>
+					Merge {selection.size > 0 ? `(${selection.size})` : ''}
+				</button>
+				<button class="btn-ghost" disabled={selection.size === 0} onclick={() => selection.clear()}>Clear selection</button>
+			</div>
+			{#if selection.size >= 2 && !canMerge}
+				<p class="warn">Those cells aren't all connected — pick an adjoining group.</p>
+			{/if}
+		{/if}
 
 		<div class="palette-actions">
 			<button class="btn-clear" onclick={clearBoard}>Clear {mode}</button>
@@ -244,6 +323,7 @@
 			bind:this={svgEl}
 			{viewBox}
 			class="board"
+			class:merge-mode={editMode === 'merge'}
 			onpointermove={handleMove}
 			onpointerup={handleClick}
 			onpointerleave={handleLeave}
@@ -254,6 +334,19 @@
 				{#each faces as face (face.id)}
 					<polygon points={face.poly.map(([x, y]) => `${x},${y}`).join(' ')} class="face" />
 				{/each}
+
+				{#if editMode === 'merge'}
+					{#each board.cells as cell (cell.id)}
+						{#if selection.has(cell.id)}
+							<polygon points={cell.poly.map(([x, y]) => `${x},${y}`).join(' ')} class="sel" pointer-events="none" />
+						{:else if hoverCellId === cell.id}
+							<polygon points={cell.poly.map(([x, y]) => `${x},${y}`).join(' ')} class="sel-hover" pointer-events="none" />
+						{/if}
+					{/each}
+					{#if selectionUnion}
+						<polygon points={selectionUnion.map(([x, y]) => `${x},${y}`).join(' ')} class="sel-union" pointer-events="none" />
+					{/if}
+				{/if}
 
 				{#if preview}
 					{#if preview.reset}
@@ -270,38 +363,26 @@
 </div>
 
 {#if showPrint}
-	<PrintPreview {board} {mode} {rotation} {design} onClose={() => (showPrint = false)} />
+	<PrintPreview {board} {mode} {rotation} {design} merges={merges} onClose={() => (showPrint = false)} />
 {/if}
 
 <style>
 	.parquetry-app {
-		display: flex;
-		gap: 1rem;
-		height: 100vh;
-		padding: 1rem;
-		box-sizing: border-box;
-		font-family: system-ui, -apple-system, sans-serif;
-		background: #f8f7f5;
+		display: flex; gap: 1rem; height: 100vh; padding: 1rem; box-sizing: border-box;
+		font-family: system-ui, -apple-system, sans-serif; background: #f8f7f5;
 	}
-
 	.palette {
-		flex: 0 0 280px;
-		background: white;
-		border-radius: 8px;
-		padding: 1rem;
-		box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
-		overflow-y: auto;
+		flex: 0 0 280px; background: white; border-radius: 8px; padding: 1rem;
+		box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1); overflow-y: auto;
 	}
-
 	.palette h3 { margin: 0 0 0.5rem; font-size: 1rem; color: #333; }
 	.palette h3:not(:first-child) { margin-top: 1.25rem; }
 
 	.mode-pills { display: flex; gap: 0.4rem; margin-bottom: 0.75rem; }
-
 	.pill {
 		flex: 1; display: flex; flex-direction: column; align-items: center; gap: 1px;
-		padding: 0.4rem 0.3rem; border: 1px solid #ccc; border-radius: 999px;
-		background: white; cursor: pointer; transition: all 0.15s;
+		padding: 0.4rem 0.3rem; border: 1px solid #ccc; border-radius: 999px; background: white;
+		cursor: pointer; transition: all 0.15s;
 	}
 	.pill-label { font-size: 0.74rem; font-weight: 600; color: #444; }
 	.pill-sub { font-size: 0.6rem; color: #999; }
@@ -311,20 +392,26 @@
 
 	.rotate-controls { display: flex; align-items: center; gap: 0.4rem; }
 	.rotate-controls button {
-		padding: 0.35rem 0.6rem; font-size: 1rem; border: 1px solid #ccc;
-		border-radius: 5px; background: white; cursor: pointer; line-height: 1;
+		padding: 0.35rem 0.6rem; font-size: 1rem; border: 1px solid #ccc; border-radius: 5px;
+		background: white; cursor: pointer; line-height: 1;
 	}
 	.rotate-controls button:hover { background: #f0f0f0; }
 	.rot-readout { min-width: 3rem; text-align: center; font-size: 0.85rem; font-variant-numeric: tabular-nums; color: #444; }
 	.rot-reset { margin-left: auto; font-size: 0.72rem !important; padding: 0.35rem 0.5rem !important; }
 	.rot-reset:disabled { opacity: 0.4; cursor: default; }
 
-	.tool-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.35rem; }
+	.editmode-toggle { display: flex; gap: 0.4rem; }
+	.editmode-toggle button {
+		flex: 1; padding: 0.5rem; font-size: 0.82rem; font-weight: 600; border: 1px solid #ccc;
+		border-radius: 6px; background: white; color: #555; cursor: pointer; transition: all 0.15s;
+	}
+	.editmode-toggle button.active { border-color: dodgerblue; background: #e8f0ff; color: #1565c0; }
 
+	.tool-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.35rem; }
 	.tool-btn {
-		display: flex; flex-direction: column; align-items: center; gap: 2px;
-		padding: 4px 2px; border: 2px solid transparent; border-radius: 6px;
-		background: #f5f2ec; cursor: pointer; transition: border-color 0.15s, background 0.15s;
+		display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 4px 2px;
+		border: 2px solid transparent; border-radius: 6px; background: #f5f2ec; cursor: pointer;
+		transition: border-color 0.15s, background 0.15s;
 	}
 	.tool-btn span { font-size: 0.62rem; color: #777; }
 	.tool-btn:hover { background: #ece6db; }
@@ -332,32 +419,50 @@
 	.tool-btn.active span { color: #1565c0; }
 
 	.cycle-note { margin: 0.6rem 0 0; font-size: 0.7rem; color: #999; line-height: 1.5; }
+	.warn { margin: 0.5rem 0 0; font-size: 0.7rem; color: #c67; line-height: 1.4; }
+
+	.merge-actions { display: flex; flex-direction: column; gap: 0.4rem; margin-top: 0.75rem; }
+	.btn-merge {
+		padding: 0.5rem; font-size: 0.82rem; font-weight: 600; border: none; border-radius: 6px;
+		background: #6b4423; color: white; cursor: pointer;
+	}
+	.btn-merge:disabled { background: #d8cfc4; color: #fff; cursor: default; }
+	.btn-ghost {
+		padding: 0.4rem; font-size: 0.72rem; border: 1px solid #ccc; border-radius: 5px;
+		background: white; color: #666; cursor: pointer;
+	}
+	.btn-ghost:disabled { opacity: 0.4; cursor: default; }
 
 	.palette-actions { display: flex; gap: 0.5rem; margin-top: 1rem; }
 	.btn-clear {
-		flex: 1; padding: 0.4rem 0.5rem; font-size: 0.75rem; border: 1px solid #c33;
-		border-radius: 4px; cursor: pointer; background: white; color: #c33; text-transform: capitalize;
+		flex: 1; padding: 0.4rem 0.5rem; font-size: 0.75rem; border: 1px solid #c33; border-radius: 4px;
+		cursor: pointer; background: white; color: #c33; text-transform: capitalize;
 	}
 	.btn-clear:hover { background: #fef0f0; }
 
 	.btn-print {
-		width: 100%; margin-top: 0.6rem; padding: 0.6rem; display: inline-flex;
-		align-items: center; justify-content: center; gap: 0.4rem; font-size: 0.82rem;
-		font-weight: 600; border: none; border-radius: 6px; background: #1565c0; color: white;
-		cursor: pointer; box-shadow: 0 1px 3px rgba(21, 101, 192, 0.35);
+		width: 100%; margin-top: 0.6rem; padding: 0.6rem; display: inline-flex; align-items: center;
+		justify-content: center; gap: 0.4rem; font-size: 0.82rem; font-weight: 600; border: none;
+		border-radius: 6px; background: #1565c0; color: white; cursor: pointer;
+		box-shadow: 0 1px 3px rgba(21, 101, 192, 0.35);
 	}
 	.btn-print:hover { background: #0f4c98; }
 
 	.board-container {
-		flex: 1; display: flex; align-items: center; justify-content: center;
-		background: white; border-radius: 8px; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1); overflow: hidden;
+		flex: 1; display: flex; align-items: center; justify-content: center; background: white;
+		border-radius: 8px; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1); overflow: hidden;
 	}
 	.board { width: 100%; height: 100%; max-height: 100%; cursor: crosshair; touch-action: none; }
+	.board.merge-mode { cursor: pointer; }
 
 	.face { fill: white; stroke: #bbb; stroke-width: 0.7; }
 	.preview-face { fill: rgba(30, 120, 220, 0.08); stroke: dodgerblue; stroke-width: 1.1; }
 	.preview-face-active { fill: rgba(30, 120, 220, 0.26); stroke: dodgerblue; stroke-width: 1.1; }
 	.preview-reset { fill: rgba(200, 60, 60, 0.06); stroke: #c33; stroke-width: 1.1; stroke-dasharray: 3 2; }
+
+	.sel { fill: rgba(107, 68, 35, 0.28); stroke: #6b4423; stroke-width: 1; }
+	.sel-hover { fill: rgba(107, 68, 35, 0.1); stroke: #6b4423; stroke-width: 0.8; stroke-dasharray: 2 2; }
+	.sel-union { fill: none; stroke: #6b4423; stroke-width: 1.8; }
 
 	@media (max-width: 700px) {
 		.parquetry-app { flex-direction: column; height: auto; }
