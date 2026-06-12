@@ -3,7 +3,7 @@
 	import {
 		buildBoard, diamondPoly, edgePoly, shapePoly, polyToPoints, pointInPoly,
 		rotatedViewBox, geoFor, rotStepFor, grainById,
-		GRAINS, SHAPES,
+		GRAINS, SHAPES, MODES,
 		type Grain, type Shape, type Mode, type EdgeKind
 	} from '$lib/grid';
 	import PrintPreview from './PrintPreview.svelte';
@@ -13,7 +13,7 @@
 	const PAD = 14;
 
 	// ---- State ----
-	let mode = $state<Mode>('rhombus60');
+	let mode = $state<Mode>('tall');
 	let rotation = $state(0);
 	let selectedShape = $state<Shape | null>(null);
 	let selectedGrain = $state<Grain | null>(null);
@@ -202,13 +202,13 @@
 <div class="parquetry-app">
 	<div class="palette">
 		<h3>Grid</h3>
-		<div class="mode-toggle">
-			<button class:active={mode === 'rhombus60'} onclick={() => setMode('rhombus60')}>
-				30° / 60° Diamonds
-			</button>
-			<button class:active={mode === 'square'} onclick={() => setMode('square')}>
-				45° Squares
-			</button>
+		<div class="mode-pills">
+			{#each MODES as m (m.id)}
+				<button class="pill" class:active={mode === m.id} onclick={() => setMode(m.id)}>
+					<span class="pill-label">{m.label}</span>
+					<span class="pill-sub">{m.sub}</span>
+				</button>
+			{/each}
 		</div>
 
 		<div class="rotate-controls">
@@ -393,28 +393,49 @@
 		margin-top: 1.25rem;
 	}
 
-	.mode-toggle {
+	.mode-pills {
 		display: flex;
 		gap: 0.4rem;
 		margin-bottom: 0.75rem;
 	}
 
-	.mode-toggle button {
+	.pill {
 		flex: 1;
-		padding: 0.45rem 0.4rem;
-		font-size: 0.72rem;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 1px;
+		padding: 0.4rem 0.3rem;
 		border: 1px solid #ccc;
-		border-radius: 5px;
+		border-radius: 999px;
 		background: white;
 		cursor: pointer;
 		transition: all 0.15s;
 	}
 
-	.mode-toggle button.active {
+	.pill-label {
+		font-size: 0.74rem;
+		font-weight: 600;
+		color: #444;
+	}
+
+	.pill-sub {
+		font-size: 0.6rem;
+		color: #999;
+		font-variant-numeric: tabular-nums;
+	}
+
+	.pill.active {
 		border-color: dodgerblue;
 		background: #e8f0ff;
+	}
+
+	.pill.active .pill-label {
 		color: #1565c0;
-		font-weight: 600;
+	}
+
+	.pill.active .pill-sub {
+		color: #4a90d9;
 	}
 
 	.rotate-controls {

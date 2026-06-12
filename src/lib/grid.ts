@@ -5,7 +5,7 @@ export const HALF_W = W / 2;
 
 export type Grain = 'none' | 'fine' | 'mid' | 'bold';
 export type Shape = 'diamond' | 'tri-top' | 'tri-bottom' | 'tri-left' | 'tri-right';
-export type Mode = 'rhombus60' | 'square';
+export type Mode = 'tall' | 'flat' | 'diamond';
 
 export type EdgeKind =
 	| 'tri-left' | 'tri-right' | 'tri-top' | 'tri-bottom'
@@ -20,16 +20,34 @@ export interface Geo {
 	halfH: number;
 }
 
-/** rhombus60 = 60°/120° narrow diamond (H = W√3); square = 90° diamond (H = W) */
+/** tall = 60°/120° upright diamond (H=W√3); flat = the same rhombus on its
+ *  side (H=W/√3); diamond = 90° square on point (H=W). All are rhombi, so all
+ *  tile the same lattice and any placed pattern transfers between them. */
 export function geoFor(mode: Mode): Geo {
 	const w = W;
-	const h = mode === 'square' ? W : W * Math.sqrt(3);
+	let h: number;
+	if (mode === 'tall') h = W * Math.sqrt(3);
+	else if (mode === 'flat') h = W / Math.sqrt(3);
+	else h = W;
 	return { w, h, halfW: w / 2, halfH: h / 2 };
 }
 
+export interface ModeDef {
+	id: Mode;
+	label: string;
+	sub: string;
+	rotStep: number;
+}
+
+export const MODES: ModeDef[] = [
+	{ id: 'tall',    label: 'Tall',    sub: '30° / 60°', rotStep: 30 },
+	{ id: 'flat',    label: 'Flat',    sub: '60° / 30°', rotStep: 30 },
+	{ id: 'diamond', label: 'Diamond', sub: '45°',       rotStep: 45 }
+];
+
 /** Rotation step that produces clean axis-aligned arrangements for the mode */
 export function rotStepFor(mode: Mode): number {
-	return mode === 'square' ? 45 : 30;
+	return MODES.find((m) => m.id === mode)?.rotStep ?? 30;
 }
 
 // ---- Polygon helpers ----

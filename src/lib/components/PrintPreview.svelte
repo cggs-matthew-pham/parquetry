@@ -26,9 +26,27 @@
 	// View toggle: the finished design, or a blank grid for cutting practice
 	let view = $state<'design' | 'blank'>('design');
 
-	// A4 printable area in mm (with ~10mm margins handled by @page)
-	const A4_W = 190;
-	const A4_H = 277;
+	// Orientation defaults to whatever fits the board best (flat boards are wide)
+	let orientation = $state<'portrait' | 'landscape'>(
+		board.w > board.h ? 'landscape' : 'portrait'
+	);
+
+	const pageW = $derived(orientation === 'landscape' ? 297 : 210);
+	const pageH = $derived(orientation === 'landscape' ? 210 : 297);
+	const A4_W = $derived(pageW - 20); // ~10mm margins each side
+	const A4_H = $derived(pageH - 20);
+
+	// Drive the actual print page size/orientation
+	$effect(() => {
+		let el = document.getElementById('pq-page-style') as HTMLStyleElement | null;
+		if (!el) {
+			el = document.createElement('style');
+			el.id = 'pq-page-style';
+			document.head.appendChild(el);
+		}
+		el.textContent = `@page { size: A4 ${orientation}; margin: 0; }`;
+		return () => el?.remove();
+	});
 
 	// Fit the board rectangle into the printable area, preserving aspect
 	const fit = $derived.by(() => {
@@ -62,14 +80,18 @@
 			<button class:active={view === 'design'} onclick={() => (view = 'design')}>Finished design</button>
 			<button class:active={view === 'blank'} onclick={() => (view = 'blank')}>Blank template</button>
 		</div>
+		<div class="seg">
+			<button class:active={orientation === 'portrait'} onclick={() => (orientation = 'portrait')}>Portrait</button>
+			<button class:active={orientation === 'landscape'} onclick={() => (orientation = 'landscape')}>Landscape</button>
+		</div>
 		<div class="spacer"></div>
 		<button class="print-btn" onclick={doPrint}>Print</button>
 		<button class="close-btn" onclick={onClose}>Close</button>
 	</div>
 
 	<div class="page-scroll">
-		<div class="a4-page">
-			<svg viewBox="0 0 210 297" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
+		<div class="a4-page" style="--ar: {pageW / pageH}; aspect-ratio: {pageW} / {pageH};">
+			<svg viewBox="0 0 {pageW} {pageH}" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
 				<defs>
 					{#each GRAINS as grain (grain.id)}
 						{#if grain.spacing > 0}
@@ -87,9 +109,9 @@
 					{/each}
 				</defs>
 
-				<rect width="210" height="297" fill="white" />
+				<rect width={pageW} height={pageH} fill="white" />
 
-				<g transform="translate({10 + fit.x} {10 + fit.y}) scale({fit.scale}) rotate({rotation} {board.w / 2} {board.h / 2})">
+				<g transform="translate({(pageW - A4_W) / 2 + fit.x} {(pageH - A4_H) / 2 + fit.y}) scale({fit.scale}) rotate({rotation} {board.w / 2} {board.h / 2})">
 					{#if view === 'blank'}
 						<!-- Cutting template: every slot as a thin outline -->
 						{#each board.diamonds as d (d.key)}
@@ -198,10 +220,8 @@
 	.a4-page {
 		background: white;
 		box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
-		/* A4 aspect ratio */
-		width: min(70vh * 0.707, 90vw);
-		aspect-ratio: 210 / 297;
-		height: auto;
+		height: min(78vh, calc(90vw / var(--ar)));
+		width: auto;
 	}
 
 	.tip {
@@ -231,10 +251,5 @@
 			height: auto;
 			box-shadow: none;
 		}
-	}
-
-	@page {
-		size: A4;
-		margin: 0;
 	}
 </style>
