@@ -45,9 +45,8 @@
 	// Design view shows marked cells; blank view shows all cell outlines for cutting
 	let view = $state<'design' | 'blank'>('design');
 
-	// Print emphasises square-on-point: in square mode default to the 45°-rotated
-	// (diamond) look; otherwise follow the screen rotation. Adjustable here.
-	let printRot = $state(mode === 'square' ? (rotation + 45) % 360 : rotation);
+	// Print starts at the board's current rotation; adjustable here.
+	let printRot = $state(rotation);
 	const rotStep = $derived(rotStepFor(mode));
 
 	function rotateBy(d: number) {
