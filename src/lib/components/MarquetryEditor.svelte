@@ -167,6 +167,17 @@
 
 	function cancel() { phase = 'idleA'; A = B = C = null; }
 
+	function onKey(e: KeyboardEvent) {
+		const t = e.target as HTMLElement;
+		if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return;
+		if (e.key === 'Escape') { if (phase !== 'idleA') { cancel(); e.preventDefault(); } return; }
+		const k = e.key.toLowerCase();
+		if (k === 'b') { onBack(); e.preventDefault(); }
+		else if (k === 'l') { tool = 'line'; if (phase === 'curveC') cancel(); e.preventDefault(); }
+		else if (k === 'c') { tool = 'curve'; e.preventDefault(); }
+		else if (k === 's') { snapOn = !snapOn; e.preventDefault(); }
+	}
+
 	const seams = $derived.by(() => {
 		const out: Pt[][] = [];
 		const walk = (n: InsetRegion) => { if (n.cut) out.push(cutSeam(n.cut)); if (n.children) { walk(n.children[0]); walk(n.children[1]); } };
@@ -198,15 +209,17 @@
 	}
 </script>
 
+<svelte:window onkeydown={onKey} />
+
 <div class="mq-editor">
 	<div class="mq-bar">
-		<button class="mq-back" onclick={onBack}>← Back</button>
+		<button class="mq-back" onclick={onBack}>← Back (b)</button>
 		<div class="mq-seg">
-			<button class:active={tool === 'line'} onclick={() => { tool = 'line'; if (phase === 'curveC') cancel(); }}>Line</button>
-			<button class:active={tool === 'curve'} onclick={() => (tool = 'curve')}>Curve</button>
+			<button class:active={tool === 'line'} onclick={() => { tool = 'line'; if (phase === 'curveC') cancel(); }}>Line (l)</button>
+			<button class:active={tool === 'curve'} onclick={() => (tool = 'curve')}>Curve (c)</button>
 		</div>
-		<button class="mq-snap" class:active={snapOn} onclick={() => (snapOn = !snapOn)}>Snap: {snapOn ? 'on' : 'off'}</button>
-		{#if phase !== 'idleA'}<button class="mq-cancel" onclick={cancel}>Cancel cut</button>{/if}
+		<button class="mq-snap" class:active={snapOn} onclick={() => (snapOn = !snapOn)}>Snap: {snapOn ? 'on' : 'off'} (s)</button>
+		{#if phase !== 'idleA'}<button class="mq-cancel" onclick={cancel}>Cancel cut (esc)</button>{/if}
 		<span class="mq-hint">{hint()}</span>
 	</div>
 
