@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { rotStepFor, leaves, type Board, type Mode, type Region, type Pt, type MergeGroup } from '$lib/grid';
+	import { rotStepFor, leaves, grainById, GRAINS, type Board, type Mode, type Region, type Pt, type MergeGroup, type Grain } from '$lib/grid';
 
 	let {
 		board,
@@ -7,6 +7,7 @@
 		rotation,
 		design,
 		merges,
+		colours,
 		onClose
 	}: {
 		board: Board;
@@ -14,8 +15,18 @@
 		rotation: number;
 		design: Map<string, Region>;
 		merges: Map<string, MergeGroup>;
+		colours: Map<string, Grain>;
 		onClose: () => void;
 	} = $props();
+
+	function grainFill(g: Grain): string {
+		const def = grainById(g);
+		return def.spacing > 0 ? `url(#pgrain-${g})` : def.base;
+	}
+	function faceFill(id: string): string {
+		const g = colours.get(id);
+		return g ? grainFill(g) : 'white';
+	}
 
 	// Every leaf face: merge outlines + non-consumed cells' subdivisions.
 	const faces = $derived.by(() => {
@@ -125,9 +136,19 @@
 		<div class="a4-page" style="--ar: {pageW / pageH}; aspect-ratio: {pageW} / {pageH};">
 			<svg viewBox="0 0 {pageW} {pageH}" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
 				<rect width={pageW} height={pageH} fill="white" />
+				<defs>
+					{#each GRAINS as g (g.id)}
+						{#if g.spacing > 0}
+							<pattern id="pgrain-{g.id}" width={g.spacing} height={g.spacing} patternUnits="userSpaceOnUse" patternTransform="rotate({g.angle + printRot})">
+								<rect width={g.spacing} height={g.spacing} fill={g.base} />
+								<line x1="0" y1="0" x2={g.spacing} y2="0" stroke={g.stroke} stroke-width={g.strokeWidth} />
+							</pattern>
+						{/if}
+					{/each}
+				</defs>
 				<g transform="translate({(pageW - A4_W) / 2 + fit.x} {(pageH - A4_H) / 2 + fit.y}) scale({fit.scale}) rotate({printRot} {board.w / 2} {board.h / 2})">
 					{#each faces as face (face.id)}
-						<polygon points={pts(face.poly)} fill="white" stroke="black" stroke-width={(view === 'blank' ? 0.4 : 0.45) / fit.scale} />
+						<polygon points={pts(face.poly)} fill={view === 'blank' ? 'white' : faceFill(face.id)} stroke="black" stroke-width={(view === 'blank' ? 0.4 : 0.45) / fit.scale} />
 					{/each}
 				</g>
 			</svg>

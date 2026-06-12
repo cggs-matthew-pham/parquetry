@@ -3,14 +3,15 @@
 	import {
 		buildBoard, pointInPoly, pointInPolyGeneral, rotatedViewBox, rotStepFor, polyCentroid,
 		makeRoot, seedRegion, applyTool, leaves, previewTool, findLeaf, toolsForMode,
-		unionOutline, mergeId,
-		MODES,
-		type Mode, type Cell, type Tool, type Division, type Region, type Pt, type MergeGroup
+		unionOutline, mergeId, grainById,
+		MODES, GRAINS,
+		type Mode, type Cell, type Tool, type Division, type Region, type Pt, type MergeGroup, type Grain
 	} from '$lib/grid';
 	import PrintPreview from './PrintPreview.svelte';
 
 	const PAD = 14;
-	type EditMode = 'subdivide' | 'merge';
+	type EditMode = 'subdivide' | 'merge' | 'colour';
+	type Paint = Grain | 'erase';
 
 	// ---- State ----
 	let mode = $state<Mode>('square');         // grid tessellation
@@ -18,13 +19,17 @@
 	let rotation = $state(0);
 	let tool = $state<Tool>('half');
 	let halfAxis = $state<'h' | 'v'>('h');
+	let paint = $state<Paint>('mid');          // selected wood (or erase) for colour mode
 	let showPrint = $state(false);
 
-	// Per-mode persistence: subdivisions and merges, each keyed by the grid mode.
+	// Per-mode persistence: subdivisions, merges, and face colours, keyed by grid mode.
 	const designs: Record<Mode, SvelteMap<string, Region>> = {
 		square: new SvelteMap(), tall: new SvelteMap(), flat: new SvelteMap()
 	};
 	const mergeGroups: Record<Mode, SvelteMap<string, MergeGroup>> = {
+		square: new SvelteMap(), tall: new SvelteMap(), flat: new SvelteMap()
+	};
+	const colourMaps: Record<Mode, SvelteMap<string, Grain>> = {
 		square: new SvelteMap(), tall: new SvelteMap(), flat: new SvelteMap()
 	};
 	// Transient merge selection (cleared on commit / mode switch).
@@ -42,7 +47,25 @@
 	const rotStep = $derived(rotStepFor(mode));
 	const design = $derived(designs[mode]);
 	const merges = $derived(mergeGroups[mode]);
+	const colours = $derived(colourMaps[mode]);
 	const tools = $derived(toolsForMode(mode));
+
+	function grainFill(g: Grain): string {
+		const def = grainById(g);
+		return def.spacing > 0 ? `url(#grain-${g})` : def.base;
+	}
+	function faceFill(id: string): string {
+		const g = colours.get(id);
+		return g ? grainFill(g) : 'white';
+	}
+
+	// When a cell's structure changes, its leaf-face ids change, so drop any
+	// colours bound to the old faces of that cell.
+	function pruneColours(cellId: string) {
+		for (const key of [...colours.keys()]) {
+			if (key === cellId || key.startsWith(`${cellId}#`)) colours.delete(key);
+		}
+	}
 
 	// Cells consumed by a merge group → not rendered/handled individually.
 	const consumed = $derived(
@@ -95,6 +118,7 @@
 	function clearBoard() {
 		design.clear();
 		merges.clear();
+		colours.clear();
 		selection.clear();
 	}
 
@@ -173,12 +197,27 @@
 		}
 	}
 
+	// Which rendered face is under the cursor (leaf faces are convex, merge
+	// regions can be non-convex, so use the general test for everything).
+	function faceAt(x: number, y: number): string | null {
+		for (const f of faces) if (pointInPolyGeneral(x, y, f.poly)) return f.id;
+		return null;
+	}
+
 	function handleClick(e: PointerEvent) {
 		const { x, y } = localPoint(e);
 
+		if (editMode === 'colour') {
+			const id = faceAt(x, y);
+			if (!id) return;
+			if (paint === 'erase') colours.delete(id);
+			else colours.set(id, paint);
+			return;
+		}
+
 		if (editMode === 'merge') {
 			const g = mergeAt(x, y);
-			if (g) { merges.delete(g.id); return; } // click a merged region → unmerge
+			if (g) { merges.delete(g.id); colours.delete(g.id); return; } // unmerge
 			const cell = cellAt(x, y);
 			if (!cell || !eligible(cell)) return;
 			if (selection.has(cell.id)) selection.delete(cell.id);
@@ -189,6 +228,7 @@
 		// subdivide mode
 		const cell = cellAt(x, y);
 		if (!cell || consumed.has(cell.id)) return;
+		pruneColours(cell.id); // structure is changing → drop stale face colours
 		if (tool === 'whole') { design.delete(cell.id); return; }
 		if (tool === 'half') updateHalfAxis(x, y, cell);
 		const current = design.get(cell.id) ?? seedRegion(cell);
@@ -201,6 +241,7 @@
 		const ring = selectionUnion;
 		if (!ring) return;
 		const ids = [...selection];
+		ids.forEach(pruneColours); // member cells' colours no longer apply
 		const id = mergeId(ids);
 		merges.set(id, { id, cellIds: ids, poly: ring });
 		selection.clear();
@@ -226,6 +267,14 @@
 		if (editMode !== 'merge' || !hover) return null;
 		const cell = cellAt(hover.x, hover.y);
 		return cell && eligible(cell) ? cell.id : null;
+	});
+
+	// Hover face (colour mode): preview the selected paint on the face under cursor
+	const hoverFace = $derived.by(() => {
+		if (editMode !== 'colour' || !hover) return null;
+		const id = faceAt(hover.x, hover.y);
+		if (!id) return null;
+		return faces.find((f) => f.id === id) ?? null;
 	});
 
 	// Tool icons from live mode geometry
@@ -264,6 +313,7 @@
 		<div class="editmode-toggle">
 			<button class:active={editMode === 'subdivide'} onclick={() => setEditMode('subdivide')}>Subdivide</button>
 			<button class:active={editMode === 'merge'} onclick={() => setEditMode('merge')}>Merge</button>
+			<button class:active={editMode === 'colour'} onclick={() => setEditMode('colour')}>Colour</button>
 		</div>
 
 		{#if editMode === 'subdivide'}
@@ -288,7 +338,7 @@
 				Click a cell to subdivide it; click a half to split it once more. Keys 1–{tools.length},
 				← →, or scroll to switch tool. Whole resets a cell.
 			</p>
-		{:else}
+		{:else if editMode === 'merge'}
 			<h3>Across cells</h3>
 			<p class="cycle-note">
 				Click whole cells to select them (they must connect). Then Merge fuses them into one
@@ -303,6 +353,34 @@
 			{#if selection.size >= 2 && !canMerge}
 				<p class="warn">Those cells aren't all connected — pick an adjoining group.</p>
 			{/if}
+		{:else}
+			<h3>Wood</h3>
+			<div class="swatch-grid">
+				{#each GRAINS as g (g.id)}
+					<button class="swatch" class:active={paint === g.id} onclick={() => (paint = g.id)} title={g.label}>
+						<svg viewBox="-20 -20 40 40" width="34" height="34">
+							<defs>
+								{#if g.spacing > 0}
+									<pattern id="sw-{g.id}" width={g.spacing} height={g.spacing} patternUnits="userSpaceOnUse" patternTransform="rotate({g.angle})">
+										<rect width={g.spacing} height={g.spacing} fill={g.base} />
+										<line x1="0" y1="0" x2={g.spacing} y2="0" stroke={g.stroke} stroke-width={g.strokeWidth} />
+									</pattern>
+								{/if}
+							</defs>
+							<rect x="-18" y="-18" width="36" height="36" rx="3" fill={g.spacing > 0 ? `url(#sw-${g.id})` : g.base} stroke="#888" stroke-width="1" />
+						</svg>
+						<span>{g.label}</span>
+					</button>
+				{/each}
+				<button class="swatch" class:active={paint === 'erase'} onclick={() => (paint = 'erase')} title="Erase">
+					<svg viewBox="-20 -20 40 40" width="34" height="34">
+						<rect x="-18" y="-18" width="36" height="36" rx="3" fill="white" stroke="#888" stroke-width="1" />
+						<line x1="-12" y1="12" x2="12" y2="-12" stroke="#c33" stroke-width="2.5" />
+					</svg>
+					<span>Erase</span>
+				</button>
+			</div>
+			<p class="cycle-note">Click any face to paint it. Pick Erase to clear a face back to blank.</p>
 		{/if}
 
 		<div class="palette-actions">
@@ -330,9 +408,20 @@
 			role="application"
 			aria-label="Parquetry design board"
 		>
+			<defs>
+				{#each GRAINS as g (g.id)}
+					{#if g.spacing > 0}
+						<pattern id="grain-{g.id}" width={g.spacing} height={g.spacing} patternUnits="userSpaceOnUse" patternTransform="rotate({g.angle + rotation})">
+							<rect width={g.spacing} height={g.spacing} fill={g.base} />
+							<line x1="0" y1="0" x2={g.spacing} y2="0" stroke={g.stroke} stroke-width={g.strokeWidth} />
+						</pattern>
+					{/if}
+				{/each}
+			</defs>
+
 			<g bind:this={gridEl} transform="rotate({rotation} {pivotX} {pivotY})">
 				{#each faces as face (face.id)}
-					<polygon points={face.poly.map(([x, y]) => `${x},${y}`).join(' ')} class="face" />
+					<polygon points={face.poly.map(([x, y]) => `${x},${y}`).join(' ')} fill={faceFill(face.id)} class="face" />
 				{/each}
 
 				{#if editMode === 'merge'}
@@ -346,6 +435,12 @@
 					{#if selectionUnion}
 						<polygon points={selectionUnion.map(([x, y]) => `${x},${y}`).join(' ')} class="sel-union" pointer-events="none" />
 					{/if}
+				{/if}
+
+				{#if hoverFace}
+					<polygon points={hoverFace.poly.map(([x, y]) => `${x},${y}`).join(' ')}
+						fill={paint === 'erase' ? 'white' : grainFill(paint)}
+						class="colour-hover" pointer-events="none" />
 				{/if}
 
 				{#if preview}
@@ -363,7 +458,7 @@
 </div>
 
 {#if showPrint}
-	<PrintPreview {board} {mode} {rotation} {design} merges={merges} onClose={() => (showPrint = false)} />
+	<PrintPreview {board} {mode} {rotation} {design} merges={merges} colours={colours} onClose={() => (showPrint = false)} />
 {/if}
 
 <style>
@@ -402,10 +497,21 @@
 
 	.editmode-toggle { display: flex; gap: 0.4rem; }
 	.editmode-toggle button {
-		flex: 1; padding: 0.5rem; font-size: 0.82rem; font-weight: 600; border: 1px solid #ccc;
+		flex: 1; padding: 0.5rem 0.3rem; font-size: 0.78rem; font-weight: 600; border: 1px solid #ccc;
 		border-radius: 6px; background: white; color: #555; cursor: pointer; transition: all 0.15s;
 	}
 	.editmode-toggle button.active { border-color: dodgerblue; background: #e8f0ff; color: #1565c0; }
+
+	.swatch-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.4rem; }
+	.swatch {
+		display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 4px 2px;
+		border: 2px solid transparent; border-radius: 6px; background: #f5f2ec; cursor: pointer;
+		transition: border-color 0.15s, background 0.15s;
+	}
+	.swatch span { font-size: 0.6rem; color: #777; }
+	.swatch:hover { background: #ece6db; }
+	.swatch.active { border-color: dodgerblue; background: #e8f0ff; }
+	.swatch.active span { color: #1565c0; }
 
 	.tool-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.35rem; }
 	.tool-btn {
@@ -455,7 +561,7 @@
 	.board { width: 100%; height: 100%; max-height: 100%; cursor: crosshair; touch-action: none; }
 	.board.merge-mode { cursor: pointer; }
 
-	.face { fill: white; stroke: #bbb; stroke-width: 0.7; }
+	.face { stroke: #bbb; stroke-width: 0.7; }
 	.preview-face { fill: rgba(30, 120, 220, 0.08); stroke: dodgerblue; stroke-width: 1.1; }
 	.preview-face-active { fill: rgba(30, 120, 220, 0.26); stroke: dodgerblue; stroke-width: 1.1; }
 	.preview-reset { fill: rgba(200, 60, 60, 0.06); stroke: #c33; stroke-width: 1.1; stroke-dasharray: 3 2; }
@@ -463,6 +569,7 @@
 	.sel { fill: rgba(107, 68, 35, 0.28); stroke: #6b4423; stroke-width: 1; }
 	.sel-hover { fill: rgba(107, 68, 35, 0.1); stroke: #6b4423; stroke-width: 0.8; stroke-dasharray: 2 2; }
 	.sel-union { fill: none; stroke: #6b4423; stroke-width: 1.8; }
+	.colour-hover { opacity: 0.55; stroke: dodgerblue; stroke-width: 1.3; }
 
 	@media (max-width: 700px) {
 		.parquetry-app { flex-direction: column; height: auto; }
