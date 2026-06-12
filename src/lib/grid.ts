@@ -5,7 +5,7 @@
 export const W = 60; // base cell size in SVG units
 
 export type Grain = 'none' | 'fine' | 'mid' | 'bold';
-export type Mode = 'square' | 'tall' | 'flat';
+export type Mode = 'square' | 'diamond' | 'tall' | 'flat';
 export type Pt = [number, number];
 
 // ---- Geometry per mode ----
@@ -17,14 +17,15 @@ export interface Geo {
 	halfH: number;
 }
 
-/** square = upright square (H=W); tall = 60°/120° diamond (H=W√3);
- *  flat = the same rhombus on its side (H=W/√3). */
+/** square = upright square (H=W); diamond = the same square on-point (90°,
+ *  equal diagonals); tall = 60°/120° diamond (H=W√3); flat = the same rhombus
+ *  on its side (H=W/√3). */
 export function geoFor(mode: Mode): Geo {
 	const w = W;
 	let h: number;
 	if (mode === 'tall') h = W * Math.sqrt(3);
 	else if (mode === 'flat') h = W / Math.sqrt(3);
-	else h = W;
+	else h = W; // square and 90° diamond share the same bounding box
 	return { w, h, halfW: w / 2, halfH: h / 2 };
 }
 
@@ -37,9 +38,10 @@ export interface ModeDef {
 
 // Simple → complex, left to right. Square is the default.
 export const MODES: ModeDef[] = [
-	{ id: 'square', label: 'Square', sub: 'grid',      rotStep: 45 },
-	{ id: 'tall',   label: 'Tall',   sub: '30° / 60°', rotStep: 30 },
-	{ id: 'flat',   label: 'Flat',   sub: '60° / 30°', rotStep: 30 }
+	{ id: 'square',  label: 'Square',  sub: 'grid',      rotStep: 45 },
+	{ id: 'diamond', label: 'Diamond', sub: '90° point', rotStep: 45 },
+	{ id: 'tall',    label: 'Tall',    sub: '30° / 60°', rotStep: 30 },
+	{ id: 'flat',    label: 'Flat',    sub: '60° / 30°', rotStep: 30 }
 ];
 
 export function rotStepFor(mode: Mode): number {

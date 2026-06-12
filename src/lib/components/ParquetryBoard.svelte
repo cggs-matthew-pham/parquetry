@@ -12,7 +12,7 @@
 	import PrintPreview from './PrintPreview.svelte';
 
 	const PAD = 14;
-	const MODE_IDS: Mode[] = ['square', 'tall', 'flat'];
+	const MODE_IDS: Mode[] = ['square', 'diamond', 'tall', 'flat'];
 	type EditMode = 'subdivide' | 'merge' | 'colour';
 	type Paint = Grain | 'erase';
 
@@ -27,13 +27,13 @@
 
 	// Per-mode persistence: subdivisions, merges, and face colours, keyed by grid mode.
 	const designs: Record<Mode, SvelteMap<string, Region>> = {
-		square: new SvelteMap(), tall: new SvelteMap(), flat: new SvelteMap()
+		square: new SvelteMap(), diamond: new SvelteMap(), tall: new SvelteMap(), flat: new SvelteMap()
 	};
 	const mergeGroups: Record<Mode, SvelteMap<string, MergeGroup>> = {
-		square: new SvelteMap(), tall: new SvelteMap(), flat: new SvelteMap()
+		square: new SvelteMap(), diamond: new SvelteMap(), tall: new SvelteMap(), flat: new SvelteMap()
 	};
 	const colourMaps: Record<Mode, SvelteMap<string, Grain>> = {
-		square: new SvelteMap(), tall: new SvelteMap(), flat: new SvelteMap()
+		square: new SvelteMap(), diamond: new SvelteMap(), tall: new SvelteMap(), flat: new SvelteMap()
 	};
 	// Transient merge selection (cleared on commit / mode switch).
 	const selection = new SvelteSet<string>();
