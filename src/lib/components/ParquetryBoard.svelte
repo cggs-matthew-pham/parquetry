@@ -237,22 +237,48 @@
 		reader.readAsText(file);
 	}
 
-	// ---- Tool cycling (subdivide mode only) ----
+	// ---- Cycling (keyboard) ----
+	const EDIT_MODES: EditMode[] = ['subdivide', 'merge', 'colour'];
+	const PAINTS: Paint[] = [...GRAINS.map((g) => g.id), 'erase'];
+
 	function cycleTool(dir: number) {
 		const ids = tools.map((t) => t.id);
 		const i = ids.indexOf(tool);
 		tool = ids[(i + dir + ids.length) % ids.length];
 	}
+	function cyclePaint(dir: number) {
+		const i = PAINTS.indexOf(paint);
+		paint = PAINTS[(i + dir + PAINTS.length) % PAINTS.length];
+	}
+	function cycleEditMode(dir: number) {
+		const i = EDIT_MODES.indexOf(editMode);
+		setEditMode(EDIT_MODES[(i + dir + EDIT_MODES.length) % EDIT_MODES.length]);
+	}
 
 	function handleKey(e: KeyboardEvent) {
 		const t = e.target as HTMLElement;
 		if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return;
-		if (editMode !== 'subdivide') return;
+
+		// Up/down switch the working mode (matches the vertical mode list).
+		if (e.key === 'ArrowUp') { cycleEditMode(-1); e.preventDefault(); return; }
+		if (e.key === 'ArrowDown') { cycleEditMode(1); e.preventDefault(); return; }
+
+		// Left/right (and [ ]) cycle within the current mode.
+		const back = e.key === 'ArrowLeft' || e.key === '[';
+		const fwd = e.key === 'ArrowRight' || e.key === ']';
+		if (back || fwd) {
+			const dir = fwd ? 1 : -1;
+			if (editMode === 'subdivide') { cycleTool(dir); e.preventDefault(); }
+			else if (editMode === 'colour') { cyclePaint(dir); e.preventDefault(); }
+			return;
+		}
+
+		// Number keys pick directly: subdivide tools, or colour swatches.
 		if (e.key >= '1' && e.key <= '9') {
 			const i = Number(e.key) - 1;
-			if (i < tools.length) { tool = tools[i].id; e.preventDefault(); }
-		} else if (e.key === ']' || e.key === 'ArrowRight') { cycleTool(1); e.preventDefault(); }
-		else if (e.key === '[' || e.key === 'ArrowLeft') { cycleTool(-1); e.preventDefault(); }
+			if (editMode === 'subdivide' && i < tools.length) { tool = tools[i].id; e.preventDefault(); }
+			else if (editMode === 'colour' && i < PAINTS.length) { paint = PAINTS[i]; e.preventDefault(); }
+		}
 	}
 
 	// ---- Hit testing ----
@@ -430,10 +456,17 @@
 
 		<h3>Mode</h3>
 		<div class="editmode-toggle">
-			<button class:active={editMode === 'subdivide'} onclick={() => setEditMode('subdivide')}>Subdivide</button>
-			<button class:active={editMode === 'merge'} onclick={() => setEditMode('merge')}>Merge</button>
-			<button class:active={editMode === 'colour'} onclick={() => setEditMode('colour')}>Colour</button>
+			<button class:active={editMode === 'subdivide'} onclick={() => setEditMode('subdivide')}>
+				<span class="em-label">Subdivide</span><span class="em-axis">within a cell</span>
+			</button>
+			<button class:active={editMode === 'merge'} onclick={() => setEditMode('merge')}>
+				<span class="em-label">Merge</span><span class="em-axis">across cells</span>
+			</button>
+			<button class:active={editMode === 'colour'} onclick={() => setEditMode('colour')}>
+				<span class="em-label">Colour</span><span class="em-axis">fill faces</span>
+			</button>
 		</div>
+		<p class="key-hint">↑ ↓ switch mode</p>
 
 		{#if editMode === 'subdivide'}
 			<h3>Within a cell</h3>
@@ -499,7 +532,7 @@
 					<span>Erase</span>
 				</button>
 			</div>
-			<p class="cycle-note">Click any face to paint it. Pick Erase to clear a face back to blank.</p>
+			<p class="cycle-note">Click any face to paint it. Keys 1–{PAINTS.length} or ← → pick a wood; Erase clears a face back to blank.</p>
 		{/if}
 
 		<div class="palette-actions">
@@ -628,12 +661,17 @@
 	.rot-reset { margin-left: auto; font-size: 0.72rem !important; padding: 0.35rem 0.5rem !important; }
 	.rot-reset:disabled { opacity: 0.4; cursor: default; }
 
-	.editmode-toggle { display: flex; gap: 0.4rem; }
+	.editmode-toggle { display: flex; flex-direction: column; gap: 0.4rem; }
 	.editmode-toggle button {
-		flex: 1; padding: 0.5rem 0.3rem; font-size: 0.78rem; font-weight: 600; border: 1px solid #ccc;
-		border-radius: 6px; background: white; color: #555; cursor: pointer; transition: all 0.15s;
+		display: flex; align-items: baseline; justify-content: space-between; gap: 0.5rem;
+		width: 100%; padding: 0.5rem 0.7rem; font-size: 0.82rem; font-weight: 600;
+		border: 1px solid #ccc; border-radius: 6px; background: white; color: #555;
+		cursor: pointer; transition: all 0.15s; text-align: left;
 	}
+	.editmode-toggle .em-axis { font-size: 0.62rem; font-weight: 500; color: #aaa; }
 	.editmode-toggle button.active { border-color: dodgerblue; background: #e8f0ff; color: #1565c0; }
+	.editmode-toggle button.active .em-axis { color: #7aa7e0; }
+	.key-hint { margin: 0.4rem 0 0; font-size: 0.66rem; color: #aaa; text-align: center; }
 
 	.swatch-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.4rem; }
 	.swatch {
