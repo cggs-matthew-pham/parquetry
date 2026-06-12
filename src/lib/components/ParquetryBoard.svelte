@@ -264,7 +264,14 @@
 			<button class="btn-deselect" onclick={deselect}>Deselect</button>
 			<button class="btn-clear" onclick={clearAll}>Clear All</button>
 		</div>
-		<button class="btn-print" onclick={() => (showPrint = true)}>Print / Export…</button>
+		<button class="btn-print" onclick={() => (showPrint = true)}>
+			<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+				<polyline points="6 9 6 2 18 2 18 9" />
+				<path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
+				<rect x="6" y="14" width="12" height="8" />
+			</svg>
+			Print / Export
+		</button>
 
 		{#if selectedGrain}
 			<p class="hint">Click any slot to place. Click a placed piece to remove it.</p>
@@ -535,19 +542,31 @@
 
 	.btn-print {
 		width: 100%;
-		margin-top: 0.5rem;
-		padding: 0.5rem;
-		font-size: 0.8rem;
-		border: 1px solid #1565c0;
-		border-radius: 5px;
-		background: #e8f0ff;
-		color: #1565c0;
+		margin-top: 0.6rem;
+		padding: 0.6rem;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: 0.4rem;
+		font-size: 0.82rem;
 		font-weight: 600;
+		border: none;
+		border-radius: 6px;
+		background: #1565c0;
+		color: white;
 		cursor: pointer;
+		box-shadow: 0 1px 3px rgba(21, 101, 192, 0.35);
+		transition: background 0.15s, box-shadow 0.15s;
 	}
 
 	.btn-print:hover {
-		background: #d8e8ff;
+		background: #0f4c98;
+		box-shadow: 0 2px 6px rgba(21, 101, 192, 0.45);
+	}
+
+	.btn-print:active {
+		background: #0d4080;
+		box-shadow: 0 1px 2px rgba(21, 101, 192, 0.4);
 	}
 
 	.hint {
