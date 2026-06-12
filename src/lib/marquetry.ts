@@ -12,7 +12,7 @@
 // function proven in the Python mock; only the tree, ids, and serialisation here
 // are new.
 
-import { pointInPolyGeneral, type Pt } from './grid';
+import { pointInPolyGeneral, type Pt, type LeanInset, type LeanCut } from './grid';
 
 const EPS = 1e-7;
 const AREA_EPS = 1e-4;
@@ -262,9 +262,7 @@ export function insetLandmarks(poly: Pt[], corner: boolean[]): Landmark[] {
 }
 
 // ---- Lean serialisation (structure only; polygons recomputed on import) ----
-
-export interface LeanCut { a: Pt; b: Pt; c?: Pt; }
-export interface LeanInset { cut: LeanCut; children: [LeanInset | null, LeanInset | null]; }
+// LeanCut / LeanInset live in grid.ts alongside LeanMode.
 
 /** Reduce a live inset to its lean form, or null if the face was never cut. */
 export function insetToLean(node: InsetRegion): LeanInset | null {

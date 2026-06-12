@@ -515,10 +515,18 @@ export interface LeanCell {
 	halves?: [boolean, boolean];
 }
 
+/** A marquetry cut in lean form: endpoints and an optional quadratic control. */
+export interface LeanCut { a: Pt; b: Pt; c?: Pt; }
+
+/** A face's marquetry inset: a binary tree of cuts. A null child is an uncut
+ *  sub-piece (a leaf). Polygons are recomputed by replaying the cuts on import. */
+export interface LeanInset { cut: LeanCut; children: [LeanInset | null, LeanInset | null]; }
+
 export interface LeanMode {
 	cells: Record<string, LeanCell>;
 	merges: string[][];
 	colours: Record<string, Grain>;
+	insets?: Record<string, LeanInset>;
 }
 
 /** State key combining grid mode and orientation, e.g. "square:landscape". */

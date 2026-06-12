@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { rotStepFor, leaves, grainById, GRAINS, MM_PER_UNIT, type Board, type Mode, type Orientation, type Region, type Pt, type MergeGroup, type Grain } from '$lib/grid';
+	import { insetLeafEntries, type InsetRegion } from '$lib/marquetry';
 
 	let {
 		board,
@@ -9,6 +10,7 @@
 		design,
 		merges,
 		colours,
+		insets,
 		onClose
 	}: {
 		board: Board;
@@ -18,6 +20,7 @@
 		design: Map<string, Region>;
 		merges: Map<string, MergeGroup>;
 		colours: Map<string, Grain>;
+		insets: Map<string, InsetRegion>;
 		onClose: () => void;
 	} = $props();
 
@@ -30,16 +33,24 @@
 		return g ? grainFill(g) : 'white';
 	}
 
-	// Every leaf face: merge outlines + non-consumed cells' subdivisions.
+	// Every leaf face: merge outlines + non-consumed cells' subdivisions, then any
+	// face carrying a marquetry inset expanded into its sub-pieces. Sub-piece
+	// boundaries are the cut lines, so this covers both the design and blank views.
 	const faces = $derived.by(() => {
 		const consumed = new Set([...merges.values()].flatMap((g) => g.cellIds));
-		const out: { id: string; poly: Pt[] }[] = [];
-		for (const g of merges.values()) out.push({ id: g.id, poly: g.poly });
+		const base: { id: string; poly: Pt[] }[] = [];
+		for (const g of merges.values()) base.push({ id: g.id, poly: g.poly });
 		for (const cell of board.cells) {
 			if (consumed.has(cell.id)) continue;
 			const region = design.get(cell.id);
-			if (!region) out.push({ id: cell.id, poly: cell.poly });
-			else leaves(region).forEach((lf, k) => out.push({ id: `${cell.id}#${k}`, poly: lf.poly }));
+			if (!region) base.push({ id: cell.id, poly: cell.poly });
+			else leaves(region).forEach((lf, k) => base.push({ id: `${cell.id}#${k}`, poly: lf.poly }));
+		}
+		const out: { id: string; poly: Pt[] }[] = [];
+		for (const f of base) {
+			const inset = insets.get(f.id);
+			if (inset) for (const e of insetLeafEntries(inset)) out.push({ id: f.id + e.path, poly: e.poly });
+			else out.push(f);
 		}
 		return out;
 	});

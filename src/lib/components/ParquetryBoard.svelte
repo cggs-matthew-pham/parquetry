@@ -7,9 +7,11 @@
 		regionToLean, rebuildRegion, isGrain, DOC_VERSION, stateKeyOf, ORIENTATIONS, MM_PER_UNIT,
 		MODES, GRAINS,
 		type Mode, type Orientation, type Cell, type Tool, type Division, type Region, type Pt, type MergeGroup, type Grain,
-		type DesignDoc, type LeanMode, type LeanCell, type StateKey
+		type DesignDoc, type LeanMode, type LeanCell, type StateKey, type LeanInset
 	} from '$lib/grid';
+	import { insetLeafEntries, insetToLean, rebuildInset, type InsetRegion } from '$lib/marquetry';
 	import PrintPreview from './PrintPreview.svelte';
+	import MarquetryEditor from './MarquetryEditor.svelte';
 
 	const PAD = 14;
 	// Screen scale for "actual size": CSS px per unit ≈ true physical size, since
@@ -17,7 +19,7 @@
 	// on-screen size across every mode and orientation.
 	const PX_PER_UNIT = MM_PER_UNIT * (96 / 25.4);
 	const MODE_IDS: Mode[] = ['square', 'diamond', 'tall', 'flat'];
-	type EditMode = 'subdivide' | 'merge' | 'colour';
+	type EditMode = 'subdivide' | 'merge' | 'colour' | 'marquetry';
 	type Paint = Grain | 'erase';
 
 	// ---- State ----
@@ -41,8 +43,12 @@
 	const designs = emptyState<Region>();
 	const mergeGroups = emptyState<MergeGroup>();
 	const colourMaps = emptyState<Grain>();
+	const insetMaps = emptyState<InsetRegion>();
 	// Transient merge selection (cleared on commit / mode switch).
 	const selection = new SvelteSet<string>();
+
+	// Marquetry drill-in: the face currently open for cut work, or null.
+	let drill = $state<{ id: string; poly: Pt[] } | null>(null);
 
 	let hover = $state<{ x: number; y: number } | null>(null);
 	let gridEl: SVGGElement;
@@ -61,6 +67,7 @@
 	const design = $derived(designs[stateKey]);
 	const merges = $derived(mergeGroups[stateKey]);
 	const colours = $derived(colourMaps[stateKey]);
+	const insets = $derived(insetMaps[stateKey]);
 	const tools = $derived(toolsForMode(mode));
 
 	function grainFill(g: Grain): string {
@@ -71,13 +78,20 @@
 		const g = colours.get(id);
 		return g ? grainFill(g) : 'white';
 	}
+	// Flat base colour (no grain pattern) for the drill-in editor's fills.
+	function faceBaseFill(id: string): string {
+		const g = colours.get(id);
+		return g ? grainById(g).base : 'white';
+	}
 
-	// When a cell's structure changes, its leaf-face ids change, so drop any
-	// colours bound to the old faces of that cell.
-	function pruneColours(cellId: string) {
-		for (const key of [...colours.keys()]) {
-			if (key === cellId || key.startsWith(`${cellId}#`)) colours.delete(key);
-		}
+	// When a face's structure changes, its leaf-face ids change, so drop any
+	// colours AND any marquetry inset bound to it. The prefix cascade covers both
+	// subdivision leaves (id#k) and marquetry sub-pieces (id@path) under it.
+	function pruneFace(rootId: string) {
+		const hit = (key: string) =>
+			key === rootId || key.startsWith(`${rootId}#`) || key.startsWith(`${rootId}@`);
+		for (const key of [...colours.keys()]) if (hit(key)) colours.delete(key);
+		for (const key of [...insets.keys()]) if (hit(key)) insets.delete(key);
 	}
 
 	// Cells consumed by a merge group → not rendered/handled individually.
@@ -86,7 +100,9 @@
 	);
 
 	// All leaf faces: merge-group outlines + non-consumed cells' subdivisions.
-	const faces = $derived.by(() => {
+	// Base faces: merge outlines + non-consumed cells' subdivisions (before
+	// marquetry). A marquetry inset attaches to one of these ids.
+	const baseFaces = $derived.by(() => {
 		const out: { id: string; poly: Pt[] }[] = [];
 		for (const g of merges.values()) out.push({ id: g.id, poly: g.poly });
 		for (const cell of board.cells) {
@@ -97,6 +113,20 @@
 		}
 		return out;
 	});
+
+	// Rendered faces: base faces, with any that carry an inset expanded into the
+	// inset's sub-piece leaves (ids like `${faceId}@0`).
+	const faces = $derived.by(() => {
+		const out: { id: string; poly: Pt[] }[] = [];
+		for (const f of baseFaces) {
+			const inset = insets.get(f.id);
+			if (inset) for (const e of insetLeafEntries(inset)) out.push({ id: f.id + e.path, poly: e.poly });
+			else out.push(f);
+		}
+		return out;
+	});
+
+	const basePolyById = $derived(new Map(baseFaces.map((f) => [f.id, f.poly])));
 
 	// A cell can join a merge if it's a full cell, not subdivided, not consumed.
 	function eligible(cell: Cell): boolean {
@@ -118,17 +148,20 @@
 		rotation = (Math.round(rotation / step) * step) % 360;
 		if (!tools.some((t) => t.id === tool)) tool = 'half';
 		selection.clear();
+		drill = null;
 	}
 
 	function setOrientation(o: Orientation) {
 		if (o === orientation) return;
 		orientation = o;
 		selection.clear();
+		drill = null;
 	}
 
 	function setEditMode(em: EditMode) {
 		editMode = em;
 		selection.clear();
+		drill = null;
 	}
 
 	function rotateBy(d: number) { rotation = (((rotation + d) % 360) + 360) % 360; }
@@ -138,7 +171,9 @@
 		design.clear();
 		merges.clear();
 		colours.clear();
+		insets.clear();
 		selection.clear();
+		drill = null;
 	}
 
 	// ---- Lean JSON export / import (whole document, all modes) ----
@@ -154,10 +189,16 @@
 					const lean = regionToLean(region);
 					if (lean) cells[id] = lean;
 				}
+				const insetsOut: Record<string, LeanInset> = {};
+				for (const [id, reg] of insetMaps[key]) {
+					const lean = insetToLean(reg);
+					if (lean) insetsOut[id] = lean;
+				}
 				states[key] = {
 					cells,
 					merges: [...mergeGroups[key].values()].map((g) => g.cellIds),
-					colours: Object.fromEntries(colourMaps[key])
+					colours: Object.fromEntries(colourMaps[key]),
+					insets: insetsOut
 				};
 			}
 		}
@@ -182,6 +223,7 @@
 		designs[key].clear();
 		mergeGroups[key].clear();
 		colourMaps[key].clear();
+		insetMaps[key].clear();
 		if (!lm || typeof lm !== 'object') return;
 
 		for (const [id, lean] of Object.entries(lm.cells ?? {})) {
@@ -197,6 +239,21 @@
 		}
 		for (const [id, g] of Object.entries(lm.colours ?? {})) {
 			if (isGrain(g)) colourMaps[key].set(id, g);
+		}
+
+		// Rebuild marquetry insets by replaying their cuts on the recomputed faces.
+		const consumedL = new Set([...mergeGroups[key].values()].flatMap((g) => g.cellIds));
+		const polyById = new Map<string, Pt[]>();
+		for (const g of mergeGroups[key].values()) polyById.set(g.id, g.poly);
+		for (const cell of cellById.values()) {
+			if (consumedL.has(cell.id)) continue;
+			const region = designs[key].get(cell.id);
+			if (!region) polyById.set(cell.id, cell.poly);
+			else leaves(region).forEach((lf, k) => polyById.set(`${cell.id}#${k}`, lf.poly));
+		}
+		for (const [id, lean] of Object.entries(lm.insets ?? {})) {
+			const poly = polyById.get(id);
+			if (poly && lean) insetMaps[key].set(id, rebuildInset(poly, lean));
 		}
 	}
 
@@ -238,7 +295,7 @@
 	}
 
 	// ---- Cycling (keyboard) ----
-	const EDIT_MODES: EditMode[] = ['subdivide', 'merge', 'colour'];
+	const EDIT_MODES: EditMode[] = ['subdivide', 'merge', 'colour', 'marquetry'];
 	const PAINTS: Paint[] = [...GRAINS.map((g) => g.id), 'erase'];
 
 	function cycleTool(dir: number) {
@@ -336,6 +393,15 @@
 	function handleClick(e: PointerEvent) {
 		const { x, y } = localPoint(e);
 
+		if (editMode === 'marquetry') {
+			const id = faceAt(x, y);
+			if (!id) return;
+			const owner = id.split('@')[0]; // a sub-piece maps back to its inset owner
+			const poly = basePolyById.get(owner);
+			if (poly) drill = { id: owner, poly };
+			return;
+		}
+
 		if (editMode === 'colour') {
 			const id = faceAt(x, y);
 			if (!id) return;
@@ -346,7 +412,7 @@
 
 		if (editMode === 'merge') {
 			const g = mergeAt(x, y);
-			if (g) { merges.delete(g.id); colours.delete(g.id); return; } // unmerge
+			if (g) { merges.delete(g.id); pruneFace(g.id); return; } // unmerge
 			const cell = cellAt(x, y);
 			if (!cell || !eligible(cell)) return;
 			if (selection.has(cell.id)) selection.delete(cell.id);
@@ -357,7 +423,7 @@
 		// subdivide mode
 		const cell = cellAt(x, y);
 		if (!cell || consumed.has(cell.id)) return;
-		pruneColours(cell.id); // structure is changing → drop stale face colours
+		pruneFace(cell.id); // structure is changing → drop stale face colours
 		if (tool === 'whole') { design.delete(cell.id); return; }
 		if (tool === 'half') updateHalfAxis(x, y, cell);
 		const current = design.get(cell.id) ?? seedRegion(cell);
@@ -366,11 +432,20 @@
 
 	function handleLeave() { hover = null; }
 
+	// Store the updated inset and drop the fill of the piece that was just cut
+	// (drop-on-cut: a sub-piece starts blank, recolour it in Colour mode).
+	function onMarquetryCut(next: InsetRegion, cutLeafId: string) {
+		if (!drill) return;
+		insets.set(drill.id, next);
+		colours.delete(cutLeafId);
+	}
+	function closeDrill() { drill = null; }
+
 	function commitMerge() {
 		const ring = selectionUnion;
 		if (!ring) return;
 		const ids = [...selection];
-		ids.forEach(pruneColours); // member cells' colours no longer apply
+		ids.forEach(pruneFace); // member cells' colours and insets no longer apply
 		const id = mergeId(ids);
 		merges.set(id, { id, cellIds: ids, poly: ring });
 		selection.clear();
@@ -465,6 +540,9 @@
 			<button class:active={editMode === 'colour'} onclick={() => setEditMode('colour')}>
 				<span class="em-label">Colour</span><span class="em-axis">fill faces</span>
 			</button>
+			<button class:active={editMode === 'marquetry'} onclick={() => setEditMode('marquetry')}>
+				<span class="em-label">Marquetry</span><span class="em-axis">cut within a face</span>
+			</button>
 		</div>
 		<p class="key-hint">↑ ↓ switch mode</p>
 
@@ -505,7 +583,7 @@
 			{#if selection.size >= 2 && !canMerge}
 				<p class="warn">Those cells aren't all connected — pick an adjoining group.</p>
 			{/if}
-		{:else}
+		{:else if editMode === 'colour'}
 			<h3>Wood</h3>
 			<div class="swatch-grid">
 				{#each GRAINS as g (g.id)}
@@ -533,6 +611,12 @@
 				</button>
 			</div>
 			<p class="cycle-note">Click any face to paint it. Keys 1–{PAINTS.length} or ← → pick a wood; Erase clears a face back to blank.</p>
+		{:else}
+			<h3>Within a face</h3>
+			<p class="cycle-note">
+				Click a face to open it for cut work. Inside, draw straight or curved cuts that split
+				it into pieces. Colour the pieces back in Colour mode.
+			</p>
 		{/if}
 
 		<div class="palette-actions">
@@ -553,7 +637,19 @@
 		</button>
 	</div>
 
-	<div class="board-container" class:scroll={zoom === 'actual'}>
+	<div class="board-container" class:scroll={zoom === 'actual' && !drill}>
+		{#if drill}
+			{#key drill.id}
+				<MarquetryEditor
+					faceId={drill.id}
+					poly={drill.poly}
+					inset={insets.get(drill.id) ?? null}
+					colourBaseOf={faceBaseFill}
+					onCut={onMarquetryCut}
+					onBack={closeDrill}
+				/>
+			{/key}
+		{:else}
 		<svg
 			{viewBox}
 			class="board"
@@ -612,11 +708,12 @@
 				{/if}
 			</g>
 		</svg>
+		{/if}
 	</div>
 </div>
 
 {#if showPrint}
-	<PrintPreview {board} {mode} {orientation} {rotation} {design} merges={merges} colours={colours} onClose={() => (showPrint = false)} />
+	<PrintPreview {board} {mode} {orientation} {rotation} {design} merges={merges} colours={colours} insets={insets} onClose={() => (showPrint = false)} />
 {/if}
 
 <style>
