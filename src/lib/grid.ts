@@ -246,12 +246,13 @@ export interface ToolDef {
 
 const ALL: Mode[] = ['square', 'tall', 'flat'];
 
-// Sub-cells only makes sense for diamonds (for squares it equals quarters).
+// Quarters = 4 triangles (fan); Sub-cells = 4 smaller self-similar cells
+// (small squares in square mode, small diamonds in diamond modes).
 export const TOOLS: ToolDef[] = [
 	{ id: 'whole',    label: 'Whole',     modes: ALL },
 	{ id: 'half',     label: 'Half',      modes: ALL },
 	{ id: 'quarters', label: 'Quarters',  modes: ALL },
-	{ id: 'subcells', label: 'Sub-cells', modes: ['tall', 'flat'] }
+	{ id: 'subcells', label: 'Sub-cells', modes: ALL }
 ];
 
 export function toolsForMode(mode: Mode): ToolDef[] {
@@ -327,6 +328,17 @@ function subCells(poly: Pt[]): Pt[][] {
 	return out;
 }
 
+// Quarters = fan from centre to each edge → 4 triangles. Diamond gives the
+// usual quarter triangles; square gives 4 triangles (not 4 small squares —
+// those come from sub-cells).
+function fanTriangles(poly: Pt[]): Pt[][] {
+	const c = centroidXY(poly);
+	const n = poly.length;
+	const out: Pt[][] = [];
+	for (let i = 0; i < n; i++) out.push([c, poly[i], poly[(i + 1) % n]]);
+	return out;
+}
+
 /** Apply a division to a leaf region, returning the subdivided region. */
 function divideLeaf(leaf: Region, div: Division): Region {
 	// A half (splitAxis set) can only be split once more, orthogonally.
@@ -352,12 +364,8 @@ function divideLeaf(leaf: Region, div: Division): Region {
 				{ poly: b, children: [], splitAxis: 'h' }
 			] };
 		}
-		case 'quarters': {
-			const [t, b] = splitAxisLine(leaf.poly, 'h');
-			const [tl, tr] = splitAxisLine(t, 'v');
-			const [bl, br] = splitAxisLine(b, 'v');
-			return { ...leaf, children: [tl, tr, br, bl].map((p) => ({ poly: p, children: [] })) };
-		}
+		case 'quarters':
+			return { ...leaf, children: fanTriangles(leaf.poly).map((p) => ({ poly: p, children: [] })) };
 		case 'subcells':
 			return { ...leaf, children: subCells(leaf.poly).map((p) => ({ poly: p, children: [] })) };
 		default:
