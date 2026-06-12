@@ -4,12 +4,15 @@
 		buildBoard, pointInPoly, pointInPolyGeneral, rotatedViewBox, rotStepFor, polyCentroid,
 		makeRoot, seedRegion, applyTool, leaves, previewTool, findLeaf, toolsForMode,
 		unionOutline, mergeId, grainById,
+		regionToLean, rebuildRegion, isGrain, DOC_VERSION,
 		MODES, GRAINS,
-		type Mode, type Cell, type Tool, type Division, type Region, type Pt, type MergeGroup, type Grain
+		type Mode, type Cell, type Tool, type Division, type Region, type Pt, type MergeGroup, type Grain,
+		type DesignDoc, type LeanMode, type LeanCell
 	} from '$lib/grid';
 	import PrintPreview from './PrintPreview.svelte';
 
 	const PAD = 14;
+	const MODE_IDS: Mode[] = ['square', 'tall', 'flat'];
 	type EditMode = 'subdivide' | 'merge' | 'colour';
 	type Paint = Grain | 'erase';
 
@@ -120,6 +123,86 @@
 		merges.clear();
 		colours.clear();
 		selection.clear();
+	}
+
+	// ---- Lean JSON export / import (whole document, all modes) ----
+	let fileInput: HTMLInputElement;
+
+	function buildDoc(): DesignDoc {
+		const modes = {} as Record<Mode, LeanMode>;
+		for (const m of MODE_IDS) {
+			const cells: Record<string, LeanCell> = {};
+			for (const [id, region] of designs[m]) {
+				const lean = regionToLean(region);
+				if (lean) cells[id] = lean;
+			}
+			modes[m] = {
+				cells,
+				merges: [...mergeGroups[m].values()].map((g) => g.cellIds),
+				colours: Object.fromEntries(colourMaps[m])
+			};
+		}
+		return { version: DOC_VERSION, modes };
+	}
+
+	function exportDoc() {
+		const blob = new Blob([JSON.stringify(buildDoc(), null, 2)], { type: 'application/json' });
+		const url = URL.createObjectURL(blob);
+		const a = document.createElement('a');
+		a.href = url;
+		a.download = 'parquetry-design.json';
+		a.click();
+		URL.revokeObjectURL(url);
+	}
+
+	function loadDoc(doc: DesignDoc): boolean {
+		if (!doc || typeof doc !== 'object' || doc.version !== DOC_VERSION || !doc.modes) return false;
+		for (const m of MODE_IDS) {
+			const lm = doc.modes[m];
+			const board = buildBoard(m);
+			const cellById = new Map(board.cells.map((c) => [c.id, c]));
+
+			// Mutate the existing reactive maps so the deriveds update.
+			designs[m].clear();
+			mergeGroups[m].clear();
+			colourMaps[m].clear();
+
+			if (lm && typeof lm === 'object') {
+				for (const [id, lean] of Object.entries(lm.cells ?? {})) {
+					const cell = cellById.get(id);
+					if (cell && lean && typeof lean.op === 'string') designs[m].set(id, rebuildRegion(cell, lean));
+				}
+				for (const ids of lm.merges ?? []) {
+					const polys = ids.map((id) => cellById.get(id)?.poly).filter((p): p is Pt[] => !!p);
+					if (polys.length === ids.length && ids.length >= 2) {
+						const ring = unionOutline(polys);
+						if (ring) { const id = mergeId(ids); mergeGroups[m].set(id, { id, cellIds: ids, poly: ring }); }
+					}
+				}
+				for (const [id, g] of Object.entries(lm.colours ?? {})) {
+					if (isGrain(g)) colourMaps[m].set(id, g);
+				}
+			}
+		}
+		selection.clear();
+		return true;
+	}
+
+	function onImportFile(e: Event) {
+		const input = e.target as HTMLInputElement;
+		const file = input.files?.[0];
+		input.value = ''; // allow re-importing the same file
+		if (!file) return;
+		const reader = new FileReader();
+		reader.onload = () => {
+			try {
+				const doc = JSON.parse(String(reader.result));
+				if (!loadDoc(doc)) alert('That file is not a valid parquetry design.');
+			} catch {
+				alert('Could not read that file as JSON.');
+			}
+		};
+		reader.readAsText(file);
 	}
 
 	// ---- Tool cycling (subdivide mode only) ----
@@ -386,6 +469,11 @@
 		<div class="palette-actions">
 			<button class="btn-clear" onclick={clearBoard}>Clear {mode}</button>
 		</div>
+		<div class="io-actions">
+			<button class="btn-ghost" onclick={exportDoc}>Export JSON</button>
+			<button class="btn-ghost" onclick={() => fileInput.click()}>Import JSON</button>
+			<input bind:this={fileInput} type="file" accept="application/json,.json" onchange={onImportFile} hidden />
+		</div>
 		<button class="btn-print" onclick={() => (showPrint = true)}>
 			<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
 				<polyline points="6 9 6 2 18 2 18 9" />
@@ -540,6 +628,8 @@
 	.btn-ghost:disabled { opacity: 0.4; cursor: default; }
 
 	.palette-actions { display: flex; gap: 0.5rem; margin-top: 1rem; }
+	.io-actions { display: flex; gap: 0.5rem; margin-top: 0.5rem; }
+	.io-actions .btn-ghost { flex: 1; text-align: center; }
 	.btn-clear {
 		flex: 1; padding: 0.4rem 0.5rem; font-size: 0.75rem; border: 1px solid #c33; border-radius: 4px;
 		cursor: pointer; background: white; color: #c33; text-transform: capitalize;

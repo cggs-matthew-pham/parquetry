@@ -268,6 +268,7 @@ export interface Region {
 	children: Region[];
 	root?: boolean;          // the whole cell
 	splitAxis?: 'h' | 'v';   // set on halves that can be split further
+	div?: Division;          // the named division that produced this node's children
 }
 
 export function makeRoot(poly: Pt[]): Region {
@@ -352,22 +353,22 @@ function divideLeaf(leaf: Region, div: Division): Region {
 	switch (div) {
 		case 'half-h': {
 			const [a, b] = splitAxisLine(leaf.poly, 'h');
-			return { ...leaf, children: [
+			return { ...leaf, div: 'half-h', children: [
 				{ poly: a, children: [], splitAxis: 'v' },
 				{ poly: b, children: [], splitAxis: 'v' }
 			] };
 		}
 		case 'half-v': {
 			const [a, b] = splitAxisLine(leaf.poly, 'v');
-			return { ...leaf, children: [
+			return { ...leaf, div: 'half-v', children: [
 				{ poly: a, children: [], splitAxis: 'h' },
 				{ poly: b, children: [], splitAxis: 'h' }
 			] };
 		}
 		case 'quarters':
-			return { ...leaf, children: fanTriangles(leaf.poly).map((p) => ({ poly: p, children: [] })) };
+			return { ...leaf, div: 'quarters', children: fanTriangles(leaf.poly).map((p) => ({ poly: p, children: [] })) };
 		case 'subcells':
-			return { ...leaf, children: subCells(leaf.poly).map((p) => ({ poly: p, children: [] })) };
+			return { ...leaf, div: 'subcells', children: subCells(leaf.poly).map((p) => ({ poly: p, children: [] })) };
 		default:
 			return leaf;
 	}
@@ -482,4 +483,68 @@ export function pointInPolyGeneral(px: number, py: number, poly: Pt[]): boolean 
 
 export function mergeId(cellIds: string[]): string {
 	return `m:${[...cellIds].sort().join('|')}`;
+}
+
+// ---- Lean serialisation: structure only; polygons recomputed on import ----
+
+/**
+ * Compact record of one cell's subdivision. `op` is the division applied; for
+ * half-h/half-v, `halves` records which of the two halves was split once more.
+ * 'split' is an edge-triangle (a half) that was split once. Undivided cells are
+ * simply absent from the document.
+ */
+export interface LeanCell {
+	op: Division | 'split';
+	halves?: [boolean, boolean];
+}
+
+export interface LeanMode {
+	cells: Record<string, LeanCell>;
+	merges: string[][];
+	colours: Record<string, Grain>;
+}
+
+export interface DesignDoc {
+	version: number;
+	modes: Record<Mode, LeanMode>;
+}
+
+export const DOC_VERSION = 1;
+
+/** Reduce a cell's region tree to its lean form, or null if undivided. */
+export function regionToLean(region: Region): LeanCell | null {
+	if (region.children.length === 0) return null;
+	if (region.div === 'half-h' || region.div === 'half-v') {
+		return {
+			op: region.div,
+			halves: [region.children[0].children.length > 0, region.children[1].children.length > 0]
+		};
+	}
+	if (region.div === 'quarters' || region.div === 'subcells') {
+		return { op: region.div };
+	}
+	// children but no named division → a split edge-half
+	return { op: 'split' };
+}
+
+/** Rebuild a cell's region tree from its lean form, reusing the live geometry. */
+export function rebuildRegion(cell: Cell, lean: LeanCell): Region {
+	const seed = seedRegion(cell);
+	if (lean.op === 'split') {
+		// Edge half: seed carries splitAxis, so the division arg is ignored.
+		return divideLeaf(seed, 'half-h');
+	}
+	let region = divideLeaf(seed, lean.op);
+	if ((lean.op === 'half-h' || lean.op === 'half-v') && lean.halves) {
+		const halves = lean.halves;
+		region = {
+			...region,
+			children: region.children.map((c, i) => (halves[i] ? divideLeaf(c, 'half-h') : c))
+		};
+	}
+	return region;
+}
+
+export function isGrain(v: unknown): v is Grain {
+	return typeof v === 'string' && GRAINS.some((g) => g.id === v);
 }
