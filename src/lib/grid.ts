@@ -1,18 +1,12 @@
-// Parquetry grid: rectangular board of diamonds + edge & corner triangles
+// Parquetry grid: each mode is a tessellation that emits cells (polygons with
+// stable ids). Modes are independent — no shared (i,j) lattice — so designs in
+// different modes persist separately. Subdivision of cells lives elsewhere.
 
-export const W = 60; // diamond width (horizontal diagonal) in SVG units
-export const HALF_W = W / 2;
+export const W = 60; // base cell size in SVG units
 
 export type Grain = 'none' | 'fine' | 'mid' | 'bold';
-export type Shape =
-	| 'diamond'
-	| 'tri-top' | 'tri-bottom' | 'tri-left' | 'tri-right'
-	| 'q-tl' | 'q-tr' | 'q-br' | 'q-bl';
-export type Mode = 'tall' | 'flat' | 'diamond';
-
-export type EdgeKind =
-	| 'tri-left' | 'tri-right' | 'tri-top' | 'tri-bottom'
-	| 'corner-tl' | 'corner-tr' | 'corner-bl' | 'corner-br';
+export type Mode = 'square' | 'tall' | 'flat';
+export type Pt = [number, number];
 
 // ---- Geometry per mode ----
 
@@ -23,9 +17,8 @@ export interface Geo {
 	halfH: number;
 }
 
-/** tall = 60°/120° upright diamond (H=W√3); flat = the same rhombus on its
- *  side (H=W/√3); diamond = 90° square on point (H=W). All are rhombi, so all
- *  tile the same lattice and any placed pattern transfers between them. */
+/** square = upright square (H=W); tall = 60°/120° diamond (H=W√3);
+ *  flat = the same rhombus on its side (H=W/√3). */
 export function geoFor(mode: Mode): Geo {
 	const w = W;
 	let h: number;
@@ -42,82 +35,32 @@ export interface ModeDef {
 	rotStep: number;
 }
 
+// Simple → complex, left to right. Square is the default.
 export const MODES: ModeDef[] = [
-	{ id: 'tall',    label: 'Tall',    sub: '30° / 60°', rotStep: 30 },
-	{ id: 'flat',    label: 'Flat',    sub: '60° / 30°', rotStep: 30 },
-	{ id: 'diamond', label: 'Diamond', sub: '45°',       rotStep: 45 }
+	{ id: 'square', label: 'Square', sub: 'grid',      rotStep: 45 },
+	{ id: 'tall',   label: 'Tall',   sub: '30° / 60°', rotStep: 30 },
+	{ id: 'flat',   label: 'Flat',   sub: '60° / 30°', rotStep: 30 }
 ];
 
-/** Rotation step that produces clean axis-aligned arrangements for the mode */
 export function rotStepFor(mode: Mode): number {
 	return MODES.find((m) => m.id === mode)?.rotStep ?? 30;
 }
 
 // ---- Polygon helpers ----
 
-export type Pt = [number, number];
+export function polyToPoints(poly: Pt[]): string {
+	return poly.map(([x, y]) => `${x},${y}`).join(' ');
+}
 
 export function diamondPoly(cx: number, cy: number, geo: Geo): Pt[] {
 	const { halfW, halfH } = geo;
 	return [[cx, cy - halfH], [cx + halfW, cy], [cx, cy + halfH], [cx - halfW, cy]];
 }
 
-export function edgePoly(kind: EdgeKind, cx: number, cy: number, geo: Geo): Pt[] {
-	const { halfW, halfH } = geo;
-	switch (kind) {
-		case 'tri-right':  return [[cx, cy - halfH], [cx + halfW, cy], [cx, cy + halfH]];
-		case 'tri-left':   return [[cx, cy - halfH], [cx - halfW, cy], [cx, cy + halfH]];
-		case 'tri-bottom': return [[cx - halfW, cy], [cx + halfW, cy], [cx, cy + halfH]];
-		case 'tri-top':    return [[cx - halfW, cy], [cx + halfW, cy], [cx, cy - halfH]];
-		case 'corner-tl':  return [[cx, cy], [cx + halfW, cy], [cx, cy + halfH]];
-		case 'corner-tr':  return [[cx, cy], [cx - halfW, cy], [cx, cy + halfH]];
-		case 'corner-bl':  return [[cx, cy], [cx + halfW, cy], [cx, cy - halfH]];
-		case 'corner-br':  return [[cx, cy], [cx - halfW, cy], [cx, cy - halfH]];
-	}
-}
-
-export function polyToPoints(poly: Pt[]): string {
-	return poly.map(([x, y]) => `${x},${y}`).join(' ');
-}
-
-/** Sub-shapes placeable inside a diamond slot (full, four halves, four quarters) */
-export function shapePoly(shape: Shape, cx: number, cy: number, geo: Geo): Pt[] {
-	const { halfW, halfH } = geo;
-	switch (shape) {
-		case 'diamond':    return diamondPoly(cx, cy, geo);
-		case 'tri-top':    return [[cx, cy - halfH], [cx + halfW, cy], [cx - halfW, cy]];
-		case 'tri-bottom': return [[cx + halfW, cy], [cx, cy + halfH], [cx - halfW, cy]];
-		case 'tri-left':   return [[cx, cy - halfH], [cx, cy + halfH], [cx - halfW, cy]];
-		case 'tri-right':  return [[cx, cy - halfH], [cx + halfW, cy], [cx, cy + halfH]];
-		case 'q-tl':       return [[cx, cy - halfH], [cx, cy], [cx - halfW, cy]];
-		case 'q-tr':       return [[cx, cy - halfH], [cx + halfW, cy], [cx, cy]];
-		case 'q-br':       return [[cx, cy], [cx + halfW, cy], [cx, cy + halfH]];
-		case 'q-bl':       return [[cx, cy], [cx, cy + halfH], [cx - halfW, cy]];
-	}
-}
-
-// Which quadrants of a diamond each shape occupies, for conflict detection
-export type Quad = 'TL' | 'TR' | 'BR' | 'BL';
-
-export const QUADS: Record<Shape, Quad[]> = {
-	'diamond':    ['TL', 'TR', 'BR', 'BL'],
-	'tri-top':    ['TL', 'TR'],
-	'tri-bottom': ['BL', 'BR'],
-	'tri-left':   ['TL', 'BL'],
-	'tri-right':  ['TR', 'BR'],
-	'q-tl':       ['TL'],
-	'q-tr':       ['TR'],
-	'q-br':       ['BR'],
-	'q-bl':       ['BL']
-};
-
-export function quadsOverlap(a: Shape, b: Shape): boolean {
-	const bq = QUADS[b];
-	return QUADS[a].some((q) => bq.includes(q));
-}
-
-export function shapePoints(shape: Shape, cx: number, cy: number, geo: Geo): string {
-	return polyToPoints(shapePoly(shape, cx, cy, geo));
+export function polyCentroid(poly: Pt[]): Pt {
+	let x = 0, y = 0;
+	for (const [px, py] of poly) { x += px; y += py; }
+	return [x / poly.length, y / poly.length];
 }
 
 /** Convex point-in-polygon test (consistent cross-product signs) */
@@ -134,56 +77,91 @@ export function pointInPoly(px: number, py: number, poly: Pt[]): boolean {
 	return true;
 }
 
-// ---- Board construction ----
+// ---- Diamond-lattice edge/corner triangles (tall & flat modes only) ----
 
-export interface DiamondSlot {
-	key: string;   // "d:i,j"
-	i: number;
-	j: number;
-	cx: number;
-	cy: number;
+type EdgeKind =
+	| 'tri-left' | 'tri-right' | 'tri-top' | 'tri-bottom'
+	| 'corner-tl' | 'corner-tr' | 'corner-bl' | 'corner-br';
+
+function edgePoly(kind: EdgeKind, cx: number, cy: number, geo: Geo): Pt[] {
+	const { halfW, halfH } = geo;
+	switch (kind) {
+		case 'tri-right':  return [[cx, cy - halfH], [cx + halfW, cy], [cx, cy + halfH]];
+		case 'tri-left':   return [[cx, cy - halfH], [cx - halfW, cy], [cx, cy + halfH]];
+		case 'tri-bottom': return [[cx - halfW, cy], [cx + halfW, cy], [cx, cy + halfH]];
+		case 'tri-top':    return [[cx - halfW, cy], [cx + halfW, cy], [cx, cy - halfH]];
+		case 'corner-tl':  return [[cx, cy], [cx + halfW, cy], [cx, cy + halfH]];
+		case 'corner-tr':  return [[cx, cy], [cx - halfW, cy], [cx, cy + halfH]];
+		case 'corner-bl':  return [[cx, cy], [cx + halfW, cy], [cx, cy - halfH]];
+		case 'corner-br':  return [[cx, cy], [cx - halfW, cy], [cx, cy - halfH]];
+	}
 }
 
-export interface EdgeSlot {
-	key: string;   // "e:i,j"
-	i: number;
-	j: number;
-	kind: EdgeKind;
-	cx: number;
+// ---- Cells & board ----
+
+export interface Cell {
+	id: string;   // stable within a mode, e.g. "sq:2,3" or "d:4,6"
+	poly: Pt[];
+	cx: number;   // representative interior point (for anchoring / labels)
 	cy: number;
+	// Subdivision capability: a full 'cell' takes any tool; a 'half' (edge
+	// triangle) can be split once more along splitAxis; 'terminal' (corner) can't.
+	kind: 'cell' | 'half' | 'terminal';
+	splitAxis?: 'h' | 'v';
 }
 
 export interface Board {
-	diamonds: DiamondSlot[];
-	edges: EdgeSlot[];
+	cells: Cell[];
 	w: number;
 	h: number;
 }
 
-/**
- * Build a rectangular board. cols = full-diamond columns; jmax = height in
- * half-rows (each halfH tall). Centres sit on the checkerboard lattice
- * (i*halfW, j*halfH) with i+j even. Border lattice points become edge or
- * corner triangles; interior points become full diamonds.
- */
-export function buildBoard(cols: number, jmax: number, geo: Geo): Board {
-	const { halfW, halfH } = geo;
-	const IMAX = 2 * cols;
-	const diamonds: DiamondSlot[] = [];
-	const edges: EdgeSlot[] = [];
+const SQUARE_COLS = 6;
+const SQUARE_ROWS = 8;
+const DIAMOND_COLS = 5;
+const DIAMOND_JMAX = 8;
 
-	for (let j = 0; j <= jmax; j++) {
+export function buildBoard(mode: Mode): Board {
+	return mode === 'square' ? squareGrid(SQUARE_COLS, SQUARE_ROWS) : diamondLattice(mode);
+}
+
+function squareGrid(cols: number, rows: number): Board {
+	const S = W;
+	const cells: Cell[] = [];
+	for (let r = 0; r < rows; r++) {
+		for (let c = 0; c < cols; c++) {
+			const x = c * S, y = r * S;
+			cells.push({
+				id: `sq:${c},${r}`,
+				poly: [[x, y], [x + S, y], [x + S, y + S], [x, y + S]],
+				cx: x + S / 2,
+				cy: y + S / 2,
+				kind: 'cell'
+			});
+		}
+	}
+	return { cells, w: cols * S, h: rows * S };
+}
+
+function diamondLattice(mode: Mode): Board {
+	const geo = geoFor(mode);
+	const { halfW, halfH } = geo;
+	const IMAX = 2 * DIAMOND_COLS;
+	const JMAX = DIAMOND_JMAX;
+	const cells: Cell[] = [];
+
+	for (let j = 0; j <= JMAX; j++) {
 		for (let i = 0; i <= IMAX; i++) {
 			if ((i + j) % 2 !== 0) continue;
-			const cx = i * halfW;
-			const cy = j * halfH;
-			const left = i === 0, right = i === IMAX, top = j === 0, bottom = j === jmax;
+			const cx = i * halfW, cy = j * halfH;
+			const left = i === 0, right = i === IMAX, top = j === 0, bottom = j === JMAX;
 
 			if (!left && !right && !top && !bottom) {
-				diamonds.push({ key: `d:${i},${j}`, i, j, cx, cy });
+				cells.push({ id: `d:${i},${j}`, poly: diamondPoly(cx, cy, geo), cx, cy, kind: 'cell' });
 				continue;
 			}
 
+			const isCorner = (left || right) && (top || bottom);
 			let kind: EdgeKind;
 			if (left && top) kind = 'corner-tl';
 			else if (right && top) kind = 'corner-tr';
@@ -194,35 +172,43 @@ export function buildBoard(cols: number, jmax: number, geo: Geo): Board {
 			else if (top) kind = 'tri-bottom';
 			else kind = 'tri-top';
 
-			edges.push({ key: `e:${i},${j}`, i, j, kind, cx, cy });
+			const poly = edgePoly(kind, cx, cy, geo);
+			const [ccx, ccy] = polyCentroid(poly);
+
+			if (isCorner) {
+				// Corner = a quarter triangle: terminal.
+				cells.push({ id: `e:${i},${j}`, poly, cx: ccx, cy: ccy, kind: 'terminal' });
+			} else {
+				// Edge triangle = a half: splittable once, orthogonally to its base.
+				// Left/right borders have a vertical base → split horizontally; top/
+				// bottom borders have a horizontal base → split vertically.
+				const splitAxis: 'h' | 'v' = (left || right) ? 'h' : 'v';
+				cells.push({ id: `e:${i},${j}`, poly, cx: ccx, cy: ccy, kind: 'half', splitAxis });
+			}
 		}
 	}
 
-	return { diamonds, edges, w: IMAX * halfW, h: jmax * halfH };
+	return { cells, w: IMAX * halfW, h: JMAX * halfH };
 }
 
 // ---- viewBox that fits the board rectangle after rotation ----
 
 export function rotatedViewBox(w: number, h: number, deg: number, pad: number): string {
-	const cx = w / 2;
-	const cy = h / 2;
+	const cx = w / 2, cy = h / 2;
 	const rad = (deg * Math.PI) / 180;
-	const cos = Math.cos(rad);
-	const sin = Math.sin(rad);
+	const cos = Math.cos(rad), sin = Math.sin(rad);
 	const corners: Pt[] = [[0, 0], [w, 0], [w, h], [0, h]];
 	let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
 	for (const [x, y] of corners) {
 		const rx = cx + (x - cx) * cos - (y - cy) * sin;
 		const ry = cy + (x - cx) * sin + (y - cy) * cos;
-		minX = Math.min(minX, rx);
-		maxX = Math.max(maxX, rx);
-		minY = Math.min(minY, ry);
-		maxY = Math.max(maxY, ry);
+		minX = Math.min(minX, rx); maxX = Math.max(maxX, rx);
+		minY = Math.min(minY, ry); maxY = Math.max(maxY, ry);
 	}
 	return `${minX - pad} ${minY - pad} ${maxX - minX + pad * 2} ${maxY - minY + pad * 2}`;
 }
 
-// ---- Grain / wood definitions ----
+// ---- Grain / wood (kept for the later colour step) ----
 
 export interface GrainDef {
 	id: Grain;
@@ -234,7 +220,6 @@ export interface GrainDef {
 	strokeWidth: number;
 }
 
-// Light maple → dark walnut as grain density increases
 export const GRAINS: GrainDef[] = [
 	{ id: 'none', label: 'Maple',  angle: 0,  spacing: 0,   base: '#f2e2c4', stroke: 'none',    strokeWidth: 0 },
 	{ id: 'fine', label: 'Oak',    angle: 8,  spacing: 4,   base: '#dcb988', stroke: '#c19a63', strokeWidth: 0.4 },
@@ -246,14 +231,180 @@ export function grainById(id: Grain): GrainDef {
 	return GRAINS.find((g) => g.id === id) ?? GRAINS[0];
 }
 
-export const SHAPES: { id: Shape; label: string }[] = [
-	{ id: 'diamond',    label: 'Whole' },
-	{ id: 'tri-top',    label: 'Top half' },
-	{ id: 'tri-bottom', label: 'Bottom half' },
-	{ id: 'tri-left',   label: 'Left half' },
-	{ id: 'tri-right',  label: 'Right half' },
-	{ id: 'q-tl',       label: 'Top-left quarter' },
-	{ id: 'q-tr',       label: 'Top-right quarter' },
-	{ id: 'q-br',       label: 'Bottom-right quarter' },
-	{ id: 'q-bl',       label: 'Bottom-left quarter' }
+// ---- Subdivision: recursive region tree per cell ----
+
+// UI tool: a single Half whose direction is resolved from cursor position.
+export type Tool = 'whole' | 'half' | 'quarters' | 'subcells';
+// Internal division actually applied to geometry.
+export type Division = 'half-h' | 'half-v' | 'quarters' | 'subcells';
+
+export interface ToolDef {
+	id: Tool;
+	label: string;
+	modes: Mode[];
+}
+
+const ALL: Mode[] = ['square', 'tall', 'flat'];
+
+// Sub-cells only makes sense for diamonds (for squares it equals quarters).
+export const TOOLS: ToolDef[] = [
+	{ id: 'whole',    label: 'Whole',     modes: ALL },
+	{ id: 'half',     label: 'Half',      modes: ALL },
+	{ id: 'quarters', label: 'Quarters',  modes: ALL },
+	{ id: 'subcells', label: 'Sub-cells', modes: ['tall', 'flat'] }
 ];
+
+export function toolsForMode(mode: Mode): ToolDef[] {
+	return TOOLS.filter((t) => t.modes.includes(mode));
+}
+
+/**
+ * A region is a node in a cell's subdivision tree. A leaf (children = []) is a
+ * face. `splitAxis` marks a half that may still be split once more (orthogonally).
+ */
+export interface Region {
+	poly: Pt[];
+	children: Region[];
+	root?: boolean;          // the whole cell
+	splitAxis?: 'h' | 'v';   // set on halves that can be split further
+}
+
+export function makeRoot(poly: Pt[]): Region {
+	return { poly, children: [], root: true };
+}
+
+/** Initial region for a cell, respecting its subdivision capability. */
+export function seedRegion(cell: Cell): Region {
+	if (cell.kind === 'cell') return { poly: cell.poly, children: [], root: true };
+	if (cell.kind === 'half') return { poly: cell.poly, children: [], splitAxis: cell.splitAxis };
+	return { poly: cell.poly, children: [] }; // terminal
+}
+
+function centroidXY(poly: Pt[]): Pt {
+	let x = 0, y = 0;
+	for (const [px, py] of poly) { x += px; y += py; }
+	return [x / poly.length, y / poly.length];
+}
+
+// Clip a convex polygon to one side of an axis-aligned line.
+function clipHalf(poly: Pt[], axis: 'h' | 'v', at: number, keepLess: boolean): Pt[] {
+	const coord = (p: Pt) => (axis === 'h' ? p[1] : p[0]);
+	const inside = (p: Pt) => (keepLess ? coord(p) <= at + 1e-6 : coord(p) >= at - 1e-6);
+	const out: Pt[] = [];
+	for (let i = 0; i < poly.length; i++) {
+		const a = poly[i], b = poly[(i + 1) % poly.length];
+		const ain = inside(a), bin = inside(b);
+		if (ain) out.push(a);
+		if (ain !== bin) {
+			const t = (at - coord(a)) / (coord(b) - coord(a));
+			out.push([a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])]);
+		}
+	}
+	return out;
+}
+
+function splitAxisLine(poly: Pt[], axis: 'h' | 'v'): [Pt[], Pt[]] {
+	const [cx, cy] = centroidXY(poly);
+	const at = axis === 'h' ? cy : cx;
+	return [clipHalf(poly, axis, at, true), clipHalf(poly, axis, at, false)];
+}
+
+// Four self-similar sub-cells: connect each vertex to centre via edge midpoints.
+function subCells(poly: Pt[]): Pt[][] {
+	const c = centroidXY(poly);
+	const n = poly.length;
+	const mid = (i: number): Pt => {
+		const a = poly[i], b = poly[(i + 1) % n];
+		return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+	};
+	const out: Pt[][] = [];
+	for (let i = 0; i < n; i++) {
+		const v = poly[i];
+		const mPrev = mid((i - 1 + n) % n);
+		const mNext = mid(i);
+		out.push([mPrev, v, mNext, c]);
+	}
+	return out;
+}
+
+/** Apply a division to a leaf region, returning the subdivided region. */
+function divideLeaf(leaf: Region, div: Division): Region {
+	// A half (splitAxis set) can only be split once more, orthogonally.
+	if (leaf.splitAxis) {
+		const [a, b] = splitAxisLine(leaf.poly, leaf.splitAxis);
+		return { ...leaf, children: [{ poly: a, children: [] }, { poly: b, children: [] }] };
+	}
+	// Otherwise it must be an undivided whole cell.
+	if (!leaf.root) return leaf;
+
+	switch (div) {
+		case 'half-h': {
+			const [a, b] = splitAxisLine(leaf.poly, 'h');
+			return { ...leaf, children: [
+				{ poly: a, children: [], splitAxis: 'v' },
+				{ poly: b, children: [], splitAxis: 'v' }
+			] };
+		}
+		case 'half-v': {
+			const [a, b] = splitAxisLine(leaf.poly, 'v');
+			return { ...leaf, children: [
+				{ poly: a, children: [], splitAxis: 'h' },
+				{ poly: b, children: [], splitAxis: 'h' }
+			] };
+		}
+		case 'quarters': {
+			const [t, b] = splitAxisLine(leaf.poly, 'h');
+			const [tl, tr] = splitAxisLine(t, 'v');
+			const [bl, br] = splitAxisLine(b, 'v');
+			return { ...leaf, children: [tl, tr, br, bl].map((p) => ({ poly: p, children: [] })) };
+		}
+		case 'subcells':
+			return { ...leaf, children: subCells(leaf.poly).map((p) => ({ poly: p, children: [] })) };
+		default:
+			return leaf;
+	}
+}
+
+/** Recursively find the leaf containing (x,y) and apply the division there. */
+export function applyTool(region: Region, x: number, y: number, div: Division): Region {
+	if (region.children.length === 0) {
+		if (!pointInPoly(x, y, region.poly)) return region;
+		return divideLeaf(region, div);
+	}
+	let changed = false;
+	const kids = region.children.map((c) => {
+		if (!changed && pointInPoly(x, y, c.poly)) {
+			const nc = applyTool(c, x, y, div);
+			if (nc !== c) changed = true;
+			return nc;
+		}
+		return c;
+	});
+	return changed ? { ...region, children: kids } : region;
+}
+
+/** All leaf faces of a region, in order. */
+export function leaves(region: Region): Region[] {
+	if (region.children.length === 0) return [region];
+	return region.children.flatMap(leaves);
+}
+
+/** Would-be child polygons if `div` were applied to the leaf under (x,y). */
+export function previewTool(region: Region, x: number, y: number, div: Division): Pt[][] | null {
+	const target = findLeaf(region, x, y);
+	if (!target) return null;
+	const divided = divideLeaf(target, div);
+	if (divided === target || divided.children.length === 0) return null;
+	return divided.children.map((c) => c.poly);
+}
+
+export function findLeaf(region: Region, x: number, y: number): Region | null {
+	if (region.children.length === 0) {
+		return pointInPoly(x, y, region.poly) ? region : null;
+	}
+	for (const c of region.children) {
+		const f = findLeaf(c, x, y);
+		if (f) return f;
+	}
+	return null;
+}
