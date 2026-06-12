@@ -4,7 +4,10 @@ export const W = 60; // diamond width (horizontal diagonal) in SVG units
 export const HALF_W = W / 2;
 
 export type Grain = 'none' | 'fine' | 'mid' | 'bold';
-export type Shape = 'diamond' | 'tri-top' | 'tri-bottom' | 'tri-left' | 'tri-right';
+export type Shape =
+	| 'diamond'
+	| 'tri-top' | 'tri-bottom' | 'tri-left' | 'tri-right'
+	| 'q-tl' | 'q-tr' | 'q-br' | 'q-bl';
 export type Mode = 'tall' | 'flat' | 'diamond';
 
 export type EdgeKind =
@@ -77,7 +80,7 @@ export function polyToPoints(poly: Pt[]): string {
 	return poly.map(([x, y]) => `${x},${y}`).join(' ');
 }
 
-/** Sub-shapes placeable inside a diamond slot (full + four halves) */
+/** Sub-shapes placeable inside a diamond slot (full, four halves, four quarters) */
 export function shapePoly(shape: Shape, cx: number, cy: number, geo: Geo): Pt[] {
 	const { halfW, halfH } = geo;
 	switch (shape) {
@@ -86,7 +89,31 @@ export function shapePoly(shape: Shape, cx: number, cy: number, geo: Geo): Pt[] 
 		case 'tri-bottom': return [[cx + halfW, cy], [cx, cy + halfH], [cx - halfW, cy]];
 		case 'tri-left':   return [[cx, cy - halfH], [cx, cy + halfH], [cx - halfW, cy]];
 		case 'tri-right':  return [[cx, cy - halfH], [cx + halfW, cy], [cx, cy + halfH]];
+		case 'q-tl':       return [[cx, cy - halfH], [cx, cy], [cx - halfW, cy]];
+		case 'q-tr':       return [[cx, cy - halfH], [cx + halfW, cy], [cx, cy]];
+		case 'q-br':       return [[cx, cy], [cx + halfW, cy], [cx, cy + halfH]];
+		case 'q-bl':       return [[cx, cy], [cx, cy + halfH], [cx - halfW, cy]];
 	}
+}
+
+// Which quadrants of a diamond each shape occupies, for conflict detection
+export type Quad = 'TL' | 'TR' | 'BR' | 'BL';
+
+export const QUADS: Record<Shape, Quad[]> = {
+	'diamond':    ['TL', 'TR', 'BR', 'BL'],
+	'tri-top':    ['TL', 'TR'],
+	'tri-bottom': ['BL', 'BR'],
+	'tri-left':   ['TL', 'BL'],
+	'tri-right':  ['TR', 'BR'],
+	'q-tl':       ['TL'],
+	'q-tr':       ['TR'],
+	'q-br':       ['BR'],
+	'q-bl':       ['BL']
+};
+
+export function quadsOverlap(a: Shape, b: Shape): boolean {
+	const bq = QUADS[b];
+	return QUADS[a].some((q) => bq.includes(q));
 }
 
 export function shapePoints(shape: Shape, cx: number, cy: number, geo: Geo): string {
@@ -220,9 +247,13 @@ export function grainById(id: Grain): GrainDef {
 }
 
 export const SHAPES: { id: Shape; label: string }[] = [
-	{ id: 'diamond', label: 'Diamond' },
-	{ id: 'tri-top', label: '▲ Top' },
-	{ id: 'tri-bottom', label: '▼ Bottom' },
-	{ id: 'tri-left', label: '◀ Left' },
-	{ id: 'tri-right', label: '▶ Right' }
+	{ id: 'diamond',    label: 'Whole' },
+	{ id: 'tri-top',    label: 'Top half' },
+	{ id: 'tri-bottom', label: 'Bottom half' },
+	{ id: 'tri-left',   label: 'Left half' },
+	{ id: 'tri-right',  label: 'Right half' },
+	{ id: 'q-tl',       label: 'Top-left quarter' },
+	{ id: 'q-tr',       label: 'Top-right quarter' },
+	{ id: 'q-br',       label: 'Bottom-right quarter' },
+	{ id: 'q-bl',       label: 'Bottom-left quarter' }
 ];

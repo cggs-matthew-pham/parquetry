@@ -2,7 +2,7 @@
 	import { SvelteMap } from 'svelte/reactivity';
 	import {
 		buildBoard, diamondPoly, edgePoly, shapePoly, polyToPoints, pointInPoly,
-		rotatedViewBox, geoFor, rotStepFor, grainById,
+		rotatedViewBox, geoFor, rotStepFor, grainById, quadsOverlap,
 		GRAINS, SHAPES, MODES,
 		type Grain, type Shape, type Mode, type EdgeKind
 	} from '$lib/grid';
@@ -15,17 +15,21 @@
 	// ---- State ----
 	let mode = $state<Mode>('tall');
 	let rotation = $state(0);
-	let selectedShape = $state<Shape | null>(null);
-	let selectedGrain = $state<Grain | null>(null);
+	let selectedShape = $state<Shape>('diamond');
+	let selectedGrain = $state<Grain>('none');
 	let showPrint = $state(false);
 
-	// Placed pieces. Diamond keys: "d:i,j" or "d:i,j:sub". Edge keys: "e:i,j".
 	type Placed =
 		| { t: 'd'; i: number; j: number; shape: Shape; grain: Grain }
 		| { t: 'e'; i: number; j: number; kind: EdgeKind; grain: Grain };
 	const pieces = new SvelteMap<string, Placed>();
 
+	// hover = the snapped slot under the cursor (or null); raw = the unsnapped
+	// cursor position in board-local coords, used for the free-floating preview
 	let hover = $state<{ kind: 'd' | 'e'; i: number; j: number; edge?: EdgeKind } | null>(null);
+	let raw = $state<{ x: number; y: number } | null>(null);
+
+	let svgEl: SVGSVGElement;
 	let gridEl: SVGGElement;
 
 	// ---- Derived geometry ----
@@ -38,22 +42,14 @@
 	const placedEntries = $derived(Array.from(pieces.entries()));
 
 	// ---- Placement ----
-	function diamondConflicts(i: number, j: number, shape: Shape): string[] {
-		const base = `d:${i},${j}`;
-		if (shape === 'diamond') {
-			return [base, `${base}:top`, `${base}:bottom`, `${base}:left`, `${base}:right`];
-		}
-		const sub = shape.replace('tri-', '');
-		const keys = [base];
-		if (sub === 'top' || sub === 'bottom') keys.push(`${base}:left`, `${base}:right`);
-		else keys.push(`${base}:top`, `${base}:bottom`);
-		return keys;
-	}
-
 	function placeDiamond(i: number, j: number, shape: Shape, grain: Grain) {
-		for (const ck of diamondConflicts(i, j, shape)) pieces.delete(ck);
-		const key = shape === 'diamond' ? `d:${i},${j}` : `d:${i},${j}:${shape.replace('tri-', '')}`;
-		pieces.set(key, { t: 'd', i, j, shape, grain });
+		const prefix = `d:${i},${j}:`;
+		for (const [key, p] of pieces) {
+			if (p.t === 'd' && key.startsWith(prefix) && quadsOverlap(shape, p.shape)) {
+				pieces.delete(key);
+			}
+		}
+		pieces.set(`d:${i},${j}:${shape}`, { t: 'd', i, j, shape, grain });
 	}
 
 	function placeEdge(i: number, j: number, kind: EdgeKind, grain: Grain) {
@@ -66,22 +62,6 @@
 
 	function clearAll() {
 		pieces.clear();
-	}
-
-	// ---- Palette ----
-	function selectPiece(shape: Shape, grain: Grain) {
-		if (selectedShape === shape && selectedGrain === grain) {
-			selectedShape = null;
-			selectedGrain = null;
-		} else {
-			selectedShape = shape;
-			selectedGrain = grain;
-		}
-	}
-
-	function deselect() {
-		selectedShape = null;
-		selectedGrain = null;
 	}
 
 	// ---- Mode + rotation ----
@@ -99,6 +79,43 @@
 	function resetRotation() {
 		rotation = 0;
 	}
+
+	// ---- Shape / grain cycling (keyboard + wheel) ----
+	function cycleShape(dir: number) {
+		const ids = SHAPES.map((s) => s.id);
+		const idx = ids.indexOf(selectedShape);
+		selectedShape = ids[(idx + dir + ids.length) % ids.length];
+	}
+
+	function cycleGrain(dir: number) {
+		const ids = GRAINS.map((g) => g.id);
+		const idx = ids.indexOf(selectedGrain);
+		selectedGrain = ids[(idx + dir + ids.length) % ids.length];
+	}
+
+	function handleKey(e: KeyboardEvent) {
+		const t = e.target as HTMLElement;
+		if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return;
+		if (e.key >= '1' && e.key <= '9') {
+			const idx = Number(e.key) - 1;
+			if (idx < SHAPES.length) { selectedShape = SHAPES[idx].id; e.preventDefault(); }
+		} else if (e.key === ']' || e.key === 'ArrowRight') { cycleShape(1); e.preventDefault(); }
+		else if (e.key === '[' || e.key === 'ArrowLeft') { cycleShape(-1); e.preventDefault(); }
+		else if (e.key === 'ArrowUp') { cycleGrain(-1); e.preventDefault(); }
+		else if (e.key === 'ArrowDown') { cycleGrain(1); e.preventDefault(); }
+	}
+
+	// Wheel over the board cycles shapes (non-passive so we can preventDefault)
+	$effect(() => {
+		const el = svgEl;
+		if (!el) return;
+		const onWheel = (e: WheelEvent) => {
+			e.preventDefault();
+			cycleShape(e.deltaY > 0 ? 1 : -1);
+		};
+		el.addEventListener('wheel', onWheel, { passive: false });
+		return () => el.removeEventListener('wheel', onWheel);
+	});
 
 	// ---- Hit testing ----
 	function localPoint(e: PointerEvent): { x: number; y: number } {
@@ -127,37 +144,30 @@
 	}
 
 	function handleBoardMove(e: PointerEvent) {
-		if (!selectedGrain) {
-			hover = null;
-			return;
-		}
 		const { x, y } = localPoint(e);
+		raw = { x, y };
 		hover = hitSlot(x, y);
 	}
 
 	function handleBoardClick(e: PointerEvent) {
-		if (!selectedGrain) return;
 		const { x, y } = localPoint(e);
 		const hit = hitSlot(x, y);
 		if (!hit) return;
-		if (hit.kind === 'd') {
-			placeDiamond(hit.i, hit.j, selectedShape ?? 'diamond', selectedGrain);
-		} else if (hit.edge) {
-			placeEdge(hit.i, hit.j, hit.edge, selectedGrain);
-		}
-		hover = null;
+		if (hit.kind === 'd') placeDiamond(hit.i, hit.j, selectedShape, selectedGrain);
+		else if (hit.edge) placeEdge(hit.i, hit.j, hit.edge, selectedGrain);
 	}
 
 	function handleBoardLeave() {
 		hover = null;
+		raw = null;
 	}
 
-	function handlePieceClick(key: string, e: Event) {
+	function removeOnPointer(key: string, e: Event) {
 		e.stopPropagation();
 		removePiece(key);
 	}
 
-	function handlePieceKey(key: string, e: KeyboardEvent) {
+	function removeOnKey(key: string, e: KeyboardEvent) {
 		if (e.key === 'Enter' || e.key === ' ') {
 			e.preventDefault();
 			e.stopPropagation();
@@ -172,32 +182,31 @@
 	}
 
 	function placedPoints(p: Placed): string {
-		if (p.t === 'd') {
-			const cx = p.i * geo.halfW;
-			const cy = p.j * geo.halfH;
-			return polyToPoints(shapePoly(p.shape, cx, cy, geo));
-		}
 		const cx = p.i * geo.halfW;
 		const cy = p.j * geo.halfH;
-		return polyToPoints(edgePoly(p.kind, cx, cy, geo));
+		return p.t === 'd'
+			? polyToPoints(shapePoly(p.shape, cx, cy, geo))
+			: polyToPoints(edgePoly(p.kind, cx, cy, geo));
 	}
 
-	// Preview polygon points for the hovered slot
-	const previewPoints = $derived.by(() => {
-		if (!hover || !selectedGrain) return null;
-		if (hover.kind === 'd') {
-			const cx = hover.i * geo.halfW;
-			const cy = hover.j * geo.halfH;
-			return polyToPoints(shapePoly(selectedShape ?? 'diamond', cx, cy, geo));
-		}
-		if (hover.edge) {
-			const cx = hover.i * geo.halfW;
-			const cy = hover.j * geo.halfH;
-			return polyToPoints(edgePoly(hover.edge, cx, cy, geo));
-		}
-		return null;
+	// Snapped preview points (when over a slot)
+	const snapPoints = $derived.by(() => {
+		if (!hover) return null;
+		const cx = hover.i * geo.halfW;
+		const cy = hover.j * geo.halfH;
+		return hover.kind === 'd'
+			? polyToPoints(shapePoly(selectedShape, cx, cy, geo))
+			: hover.edge ? polyToPoints(edgePoly(hover.edge, cx, cy, geo)) : null;
+	});
+
+	// Free-floating preview points (cursor not over a slot)
+	const floatPoints = $derived.by(() => {
+		if (!raw || hover) return null;
+		return polyToPoints(shapePoly(selectedShape, raw.x, raw.y, geo));
 	});
 </script>
+
+<svelte:window onkeydown={handleKey} />
 
 <div class="parquetry-app">
 	<div class="palette">
@@ -218,50 +227,52 @@
 			<button class="rot-reset" onclick={resetRotation} disabled={rotation === 0}>Reset</button>
 		</div>
 
-		<h3>Pieces</h3>
-		<div class="palette-grid">
-			{#each GRAINS as grain (grain.id)}
-				<div class="palette-col">
-					<span class="grain-label">{grain.label}</span>
-					{#each SHAPES as shape (shape.id)}
-						<button
-							class="palette-piece"
-							class:selected={selectedShape === shape.id && selectedGrain === grain.id}
-							onclick={() => selectPiece(shape.id, grain.id)}
-							title="{grain.label} {shape.label}"
-						>
-							<svg viewBox="-36 -36 72 72" width="42" height="42">
-								<defs>
-									{#if grain.spacing > 0}
-										<pattern
-											id="pal-{grain.id}"
-											width={grain.spacing}
-											height={grain.spacing}
-											patternUnits="userSpaceOnUse"
-											patternTransform="rotate({grain.angle})"
-										>
-											<rect width={grain.spacing} height={grain.spacing} fill={grain.base} />
-											<line x1="0" y1="0" x2={grain.spacing} y2="0" stroke={grain.stroke} stroke-width={grain.strokeWidth} />
-										</pattern>
-									{/if}
-								</defs>
-								<polygon
-									points={polyToPoints(shapePoly(shape.id, 0, 0, geo))}
-									fill={grain.id === 'none' ? grain.base : `url(#pal-${grain.id})`}
-									stroke="black"
-									stroke-width="1.5"
-								/>
-							</svg>
-							<span class="piece-label">{shape.label}</span>
-						</button>
-					{/each}
-				</div>
+		<h3>Shape</h3>
+		<div class="shape-grid">
+			{#each SHAPES as s, idx (s.id)}
+				<button
+					class="shape-btn"
+					class:active={selectedShape === s.id}
+					onclick={() => (selectedShape = s.id)}
+					title="{s.label}  ({idx + 1})"
+				>
+					<svg viewBox="-38 -38 76 76" width="40" height="40">
+						<polygon points={polyToPoints(diamondPoly(0, 0, geo))} fill="none" stroke="#ddd" stroke-width="1.5" />
+						<polygon points={polyToPoints(shapePoly(s.id, 0, 0, geo))} fill="#e0d2bc" stroke="#555" stroke-width="2.5" />
+					</svg>
+				</button>
 			{/each}
 		</div>
-		<p class="edge-note">Edge and corner triangles around the border are fillable too. Pick any grain, then click them.</p>
+		<p class="cycle-note">Keys 1–9, ← →, or scroll over the board to switch shape. ↑ ↓ changes wood.</p>
+
+		<h3>Wood</h3>
+		<div class="grain-row">
+			{#each GRAINS as grain (grain.id)}
+				<button
+					class="grain-btn"
+					class:active={selectedGrain === grain.id}
+					onclick={() => (selectedGrain = grain.id)}
+					title={grain.label}
+				>
+					<svg viewBox="-38 -38 76 76" width="30" height="30">
+						<defs>
+							{#if grain.spacing > 0}
+								<pattern id="pal-{grain.id}" width={grain.spacing} height={grain.spacing} patternUnits="userSpaceOnUse" patternTransform="rotate({grain.angle})">
+									<rect width={grain.spacing} height={grain.spacing} fill={grain.base} />
+									<line x1="0" y1="0" x2={grain.spacing} y2="0" stroke={grain.stroke} stroke-width={grain.strokeWidth} />
+								</pattern>
+							{/if}
+						</defs>
+						<polygon points={polyToPoints(diamondPoly(0, 0, geo))} fill={grain.id === 'none' ? grain.base : `url(#pal-${grain.id})`} stroke="black" stroke-width="2" />
+					</svg>
+					<span>{grain.label}</span>
+				</button>
+			{/each}
+		</div>
+
+		<p class="edge-note">Edge and corner triangles round the border are fillable too. Just click them.</p>
 
 		<div class="palette-actions">
-			<button class="btn-deselect" onclick={deselect}>Deselect</button>
 			<button class="btn-clear" onclick={clearAll}>Clear All</button>
 		</div>
 		<button class="btn-print" onclick={() => (showPrint = true)}>
@@ -272,19 +283,13 @@
 			</svg>
 			Print / Export
 		</button>
-
-		{#if selectedGrain}
-			<p class="hint">Click any slot to place. Click a placed piece to remove it.</p>
-		{:else}
-			<p class="hint">Select a piece above, then click on the board to place it.</p>
-		{/if}
 	</div>
 
 	<div class="board-container">
 		<svg
+			bind:this={svgEl}
 			{viewBox}
 			class="board"
-			class:has-selection={selectedGrain !== null}
 			onpointermove={handleBoardMove}
 			onpointerup={handleBoardClick}
 			onpointerleave={handleBoardLeave}
@@ -294,13 +299,7 @@
 			<defs>
 				{#each GRAINS as grain (grain.id)}
 					{#if grain.spacing > 0}
-						<pattern
-							id="grain-{grain.id}"
-							width={grain.spacing}
-							height={grain.spacing}
-							patternUnits="userSpaceOnUse"
-							patternTransform="rotate({grain.angle + rotation})"
-						>
+						<pattern id="grain-{grain.id}" width={grain.spacing} height={grain.spacing} patternUnits="userSpaceOnUse" patternTransform="rotate({grain.angle + rotation})">
 							<rect width={grain.spacing} height={grain.spacing} fill={grain.base} />
 							<line x1="0" y1="0" x2={grain.spacing} y2="0" stroke={grain.stroke} stroke-width={grain.strokeWidth} />
 						</pattern>
@@ -309,7 +308,6 @@
 			</defs>
 
 			<g bind:this={gridEl} transform="rotate({rotation} {pivotX} {pivotY})">
-				<!-- Slot outlines -->
 				<g class="grid-layer">
 					{#each board.diamonds as d (d.key)}
 						<polygon points={polyToPoints(diamondPoly(d.cx, d.cy, geo))} class="grid-cell" />
@@ -319,7 +317,6 @@
 					{/each}
 				</g>
 
-				<!-- Placed pieces -->
 				<g class="pieces-layer">
 					{#each placedEntries as [key, p] (key)}
 						<polygon
@@ -328,8 +325,8 @@
 							stroke="black"
 							stroke-width="0.8"
 							class="placed-piece"
-							onclick={(e) => handlePieceClick(key, e)}
-							onkeydown={(e) => handlePieceKey(key, e)}
+							onpointerup={(e) => removeOnPointer(key, e)}
+							onkeydown={(e) => removeOnKey(key, e)}
 							role="button"
 							tabindex="0"
 							aria-label="Placed piece, click to remove"
@@ -337,16 +334,12 @@
 					{/each}
 				</g>
 
-				<!-- Hover preview -->
-				{#if previewPoints && selectedGrain}
-					<polygon
-						points={previewPoints}
-						fill={grainFill(selectedGrain)}
-						stroke="dodgerblue"
-						stroke-width="1.2"
-						opacity="0.5"
-						pointer-events="none"
-					/>
+				<!-- Snapped preview: locked, solid blue -->
+				{#if snapPoints}
+					<polygon points={snapPoints} fill={grainFill(selectedGrain)} stroke="dodgerblue" stroke-width="1.3" opacity="0.6" pointer-events="none" />
+				{:else if floatPoints}
+					<!-- Free-floating preview: loose, dashed grey -->
+					<polygon points={floatPoints} fill={grainFill(selectedGrain)} stroke="#888" stroke-width="1" stroke-dasharray="3 2.5" opacity="0.32" pointer-events="none" />
 				{/if}
 			</g>
 		</svg>
@@ -477,33 +470,52 @@
 		cursor: default;
 	}
 
-	.palette-grid {
-		display: flex;
-		gap: 0.25rem;
+	.shape-grid {
+		display: grid;
+		grid-template-columns: repeat(3, 1fr);
+		gap: 0.35rem;
 	}
 
-	.palette-col {
+	.shape-btn {
 		display: flex;
-		flex-direction: column;
 		align-items: center;
-		gap: 0.25rem;
+		justify-content: center;
+		padding: 2px;
+		border: 2px solid transparent;
+		border-radius: 6px;
+		background: #f5f2ec;
+		cursor: pointer;
+		transition: border-color 0.15s, background 0.15s;
+	}
+
+	.shape-btn:hover {
+		background: #ece6db;
+	}
+
+	.shape-btn.active {
+		border-color: dodgerblue;
+		background: #e8f0ff;
+	}
+
+	.cycle-note {
+		margin: 0.5rem 0 0;
+		font-size: 0.68rem;
+		color: #999;
+		line-height: 1.4;
+	}
+
+	.grain-row {
+		display: flex;
+		gap: 0.35rem;
+	}
+
+	.grain-btn {
 		flex: 1;
-	}
-
-	.grain-label {
-		font-size: 0.65rem;
-		font-weight: 600;
-		color: #666;
-		text-transform: uppercase;
-		letter-spacing: 0.03em;
-	}
-
-	.palette-piece {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
 		gap: 2px;
-		padding: 4px;
+		padding: 4px 2px;
 		border: 2px solid transparent;
 		border-radius: 6px;
 		background: none;
@@ -511,22 +523,22 @@
 		transition: border-color 0.15s, background 0.15s;
 	}
 
-	.palette-piece:hover {
+	.grain-btn span {
+		font-size: 0.6rem;
+		color: #777;
+	}
+
+	.grain-btn:hover {
 		background: #f0ede8;
 	}
 
-	.palette-piece.selected {
+	.grain-btn.active {
 		border-color: dodgerblue;
 		background: #e8f0ff;
 	}
 
-	.piece-label {
-		font-size: 0.55rem;
-		color: #888;
-	}
-
 	.edge-note {
-		margin: 0.6rem 0 0;
+		margin: 0.7rem 0 0;
 		font-size: 0.7rem;
 		color: #999;
 		line-height: 1.4;
@@ -538,27 +550,19 @@
 		margin-top: 0.75rem;
 	}
 
-	.palette-actions button {
+	.btn-clear {
 		flex: 1;
 		padding: 0.4rem 0.5rem;
 		font-size: 0.75rem;
-		border: 1px solid #ccc;
+		border: 1px solid #c33;
 		border-radius: 4px;
 		cursor: pointer;
 		background: white;
-	}
-
-	.btn-clear {
 		color: #c33;
-		border-color: #c33 !important;
 	}
 
 	.btn-clear:hover {
-		background: #fef0f0 !important;
-	}
-
-	.btn-deselect:hover {
-		background: #f0f0f0;
+		background: #fef0f0;
 	}
 
 	.btn-print {
@@ -587,14 +591,6 @@
 
 	.btn-print:active {
 		background: #0d4080;
-		box-shadow: 0 1px 2px rgba(21, 101, 192, 0.4);
-	}
-
-	.hint {
-		margin-top: 0.75rem;
-		font-size: 0.75rem;
-		color: #888;
-		line-height: 1.4;
 	}
 
 	.board-container {
@@ -612,10 +608,8 @@
 		width: 100%;
 		height: 100%;
 		max-height: 100%;
-	}
-
-	.board.has-selection {
 		cursor: crosshair;
+		touch-action: none;
 	}
 
 	.grid-cell {
@@ -652,11 +646,6 @@
 
 		.board-container {
 			aspect-ratio: 1 / 1;
-		}
-
-		.palette-grid {
-			flex-wrap: wrap;
-			justify-content: center;
 		}
 	}
 </style>
