@@ -1,9 +1,10 @@
 <script lang="ts">
-	import { rotStepFor, leaves, grainById, GRAINS, type Board, type Mode, type Region, type Pt, type MergeGroup, type Grain } from '$lib/grid';
+	import { rotStepFor, leaves, grainById, GRAINS, MM_PER_UNIT, type Board, type Mode, type Orientation, type Region, type Pt, type MergeGroup, type Grain } from '$lib/grid';
 
 	let {
 		board,
 		mode,
+		orientation: boardOrientation,
 		rotation,
 		design,
 		merges,
@@ -12,6 +13,7 @@
 	}: {
 		board: Board;
 		mode: Mode;
+		orientation: Orientation;
 		rotation: number;
 		design: Map<string, Region>;
 		merges: Map<string, MergeGroup>;
@@ -53,13 +55,8 @@
 		printRot = (((printRot + d) % 360) + 360) % 360;
 	}
 
-	// Orientation auto-picks from the rotated board's aspect; user can override
-	let orientation = $state<'portrait' | 'landscape'>('portrait');
-	$effect(() => {
-		// initialise once from the rotated footprint
-		const fp = rotatedFootprint(board.w, board.h, printRot);
-		orientation = fp.w > fp.h ? 'landscape' : 'portrait';
-	});
+	// Page orientation defaults to the board's orientation; user can override.
+	let orientation = $state<Orientation>(boardOrientation);
 
 	const pageW = $derived(orientation === 'landscape' ? 297 : 210);
 	const pageH = $derived(orientation === 'landscape' ? 210 : 297);
@@ -80,15 +77,22 @@
 		return { minX, minY, w: maxX - minX, h: maxY - minY };
 	}
 
-	// Fit the rotated board into the printable area, preserving aspect
+	// Print at the FIXED scale so pieces are a consistent physical size for
+	// cutting; just centre the (rotated) board on the page. Counts are chosen so
+	// the board fits A4 unrotated; heavy in-print rotation may overflow.
 	const fit = $derived.by(() => {
 		const fp = rotatedFootprint(board.w, board.h, printRot);
-		const scale = Math.min(A4_W / fp.w, A4_H / fp.h);
+		const scale = MM_PER_UNIT;
 		return {
 			scale,
 			x: (A4_W - fp.w * scale) / 2 - fp.minX * scale,
 			y: (A4_H - fp.h * scale) / 2 - fp.minY * scale
 		};
+	});
+
+	const fitsPage = $derived.by(() => {
+		const fp = rotatedFootprint(board.w, board.h, printRot);
+		return fp.w * MM_PER_UNIT <= A4_W + 0.5 && fp.h * MM_PER_UNIT <= A4_H + 0.5;
 	});
 
 	$effect(() => {
@@ -125,6 +129,13 @@
 			<button onclick={() => rotateBy(-rotStep)} title="Rotate left">⟲</button>
 			<span>{printRot}°</span>
 			<button onclick={() => rotateBy(rotStep)} title="Rotate right">⟳</button>
+		</div>
+		<div class="scale-note" class:warn={!fitsPage}>
+			{#if fitsPage}
+				Actual size · {MM_PER_UNIT}mm/unit
+			{:else}
+				Too large for A4 at this rotation
+			{/if}
 		</div>
 		<div class="spacer"></div>
 		<button class="print-btn" onclick={doPrint}>Print</button>
@@ -214,6 +225,9 @@
 	}
 
 	.rotbox span { min-width: 2.6rem; text-align: center; font-variant-numeric: tabular-nums; }
+
+	.scale-note { font-size: 0.72rem; color: #777; white-space: nowrap; }
+	.scale-note.warn { color: #c33; font-weight: 600; }
 
 	.spacer { flex: 1; }
 

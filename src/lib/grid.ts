@@ -6,6 +6,8 @@ export const W = 60; // base cell size in SVG units
 
 export type Grain = 'none' | 'fine' | 'mid' | 'bold';
 export type Mode = 'square' | 'diamond' | 'tall' | 'flat';
+export type Orientation = 'landscape' | 'portrait';
+export const ORIENTATIONS: Orientation[] = ['landscape', 'portrait'];
 export type Pt = [number, number];
 
 // ---- Geometry per mode ----
@@ -17,17 +19,23 @@ export interface Geo {
 	halfH: number;
 }
 
-/** square = upright square (H=W); diamond = the same square on-point (90°,
- *  equal diagonals); tall = 60°/120° diamond (H=W√3); flat = the same rhombus
- *  on its side (H=W/√3). */
+/** All modes share a 30 mm cut edge (at W=60 units, MM_PER_UNIT=0.5). square =
+ *  upright square (W×W); diamond = the SAME square rotated 45° on-point, so its
+ *  edge equals the square's and its corner-to-corner span is W√2; tall = 60°/120°
+ *  rhombus, long diagonal vertical (W×W√3); flat = that rhombus rotated 90°
+ *  (W√3×W). Every cell therefore has the same edge length. */
 export function geoFor(mode: Mode): Geo {
-	const w = W;
-	let h: number;
+	let w = W, h = W;
 	if (mode === 'tall') h = W * Math.sqrt(3);
-	else if (mode === 'flat') h = W / Math.sqrt(3);
-	else h = W; // square and 90° diamond share the same bounding box
+	else if (mode === 'flat') w = W * Math.sqrt(3);
+	else if (mode === 'diamond') w = h = W * Math.SQRT2;
 	return { w, h, halfW: w / 2, halfH: h / 2 };
 }
+
+// Fixed print scale: SVG units → millimetres. Cells print at this exact size in
+// every orientation, so pieces are consistent for hand-cutting. W=60 units →
+// 30 mm, and tall/flat rhombi have a 30 mm edge.
+export const MM_PER_UNIT = 0.5;
 
 export interface ModeDef {
 	id: Mode;
@@ -118,13 +126,20 @@ export interface Board {
 	h: number;
 }
 
-const SQUARE_COLS = 6;
-const SQUARE_ROWS = 8;
-const DIAMOND_COLS = 5;
-const DIAMOND_JMAX = 8;
+// Cell counts per mode and orientation, chosen so each board fits within A4's
+// printable area at the fixed MM_PER_UNIT scale (no shrink-to-fit), landscape
+// wider than tall and portrait taller than wide. For square: [cols, rows]; for
+// diamond modes: [COLS, JMAX] where the lattice spans i = 0..2*COLS, j = 0..JMAX.
+const DIMS: Record<Mode, Record<Orientation, [number, number]>> = {
+	square:  { landscape: [9, 6],  portrait: [6, 9]  },
+	diamond: { landscape: [6, 8],  portrait: [4, 12] },
+	tall:    { landscape: [9, 6],  portrait: [6, 10] },
+	flat:    { landscape: [5, 12], portrait: [3, 18] }
+};
 
-export function buildBoard(mode: Mode): Board {
-	return mode === 'square' ? squareGrid(SQUARE_COLS, SQUARE_ROWS) : diamondLattice(mode);
+export function buildBoard(mode: Mode, orientation: Orientation = 'landscape'): Board {
+	const [a, b] = DIMS[mode][orientation];
+	return mode === 'square' ? squareGrid(a, b) : diamondLattice(mode, a, b);
 }
 
 function squareGrid(cols: number, rows: number): Board {
@@ -145,11 +160,11 @@ function squareGrid(cols: number, rows: number): Board {
 	return { cells, w: cols * S, h: rows * S };
 }
 
-function diamondLattice(mode: Mode): Board {
+function diamondLattice(mode: Mode, cols: number, jmax: number): Board {
 	const geo = geoFor(mode);
 	const { halfW, halfH } = geo;
-	const IMAX = 2 * DIAMOND_COLS;
-	const JMAX = DIAMOND_JMAX;
+	const IMAX = 2 * cols;
+	const JMAX = jmax;
 	const cells: Cell[] = [];
 
 	for (let j = 0; j <= JMAX; j++) {
@@ -506,12 +521,19 @@ export interface LeanMode {
 	colours: Record<string, Grain>;
 }
 
-export interface DesignDoc {
-	version: number;
-	modes: Record<Mode, LeanMode>;
+/** State key combining grid mode and orientation, e.g. "square:landscape". */
+export type StateKey = `${Mode}:${Orientation}`;
+
+export function stateKeyOf(mode: Mode, orientation: Orientation): StateKey {
+	return `${mode}:${orientation}`;
 }
 
-export const DOC_VERSION = 1;
+export interface DesignDoc {
+	version: number;
+	states: Record<string, LeanMode>; // keyed by StateKey
+}
+
+export const DOC_VERSION = 2;
 
 /** Reduce a cell's region tree to its lean form, or null if undivided. */
 export function regionToLean(region: Region): LeanCell | null {

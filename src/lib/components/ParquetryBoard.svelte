@@ -4,53 +4,63 @@
 		buildBoard, pointInPoly, pointInPolyGeneral, rotatedViewBox, rotStepFor, polyCentroid,
 		makeRoot, seedRegion, applyTool, leaves, previewTool, findLeaf, toolsForMode,
 		unionOutline, mergeId, grainById,
-		regionToLean, rebuildRegion, isGrain, DOC_VERSION,
+		regionToLean, rebuildRegion, isGrain, DOC_VERSION, stateKeyOf, ORIENTATIONS, MM_PER_UNIT,
 		MODES, GRAINS,
-		type Mode, type Cell, type Tool, type Division, type Region, type Pt, type MergeGroup, type Grain,
-		type DesignDoc, type LeanMode, type LeanCell
+		type Mode, type Orientation, type Cell, type Tool, type Division, type Region, type Pt, type MergeGroup, type Grain,
+		type DesignDoc, type LeanMode, type LeanCell, type StateKey
 	} from '$lib/grid';
 	import PrintPreview from './PrintPreview.svelte';
 
 	const PAD = 14;
+	// Screen scale for "actual size": CSS px per unit ≈ true physical size, since
+	// units → mm via MM_PER_UNIT and CSS assumes ~96px/inch. Keeps a cell the same
+	// on-screen size across every mode and orientation.
+	const PX_PER_UNIT = MM_PER_UNIT * (96 / 25.4);
 	const MODE_IDS: Mode[] = ['square', 'diamond', 'tall', 'flat'];
 	type EditMode = 'subdivide' | 'merge' | 'colour';
 	type Paint = Grain | 'erase';
 
 	// ---- State ----
 	let mode = $state<Mode>('square');         // grid tessellation
+	let orientation = $state<Orientation>('landscape');
 	let editMode = $state<EditMode>('subdivide'); // working mode
 	let rotation = $state(0);
 	let tool = $state<Tool>('half');
 	let halfAxis = $state<'h' | 'v'>('h');
 	let paint = $state<Paint>('mid');          // selected wood (or erase) for colour mode
+	let zoom = $state<'actual' | 'fit'>('actual'); // actual = consistent size (scrolls); fit = whole board
 	let showPrint = $state(false);
 
-	// Per-mode persistence: subdivisions, merges, and face colours, keyed by grid mode.
-	const designs: Record<Mode, SvelteMap<string, Region>> = {
-		square: new SvelteMap(), diamond: new SvelteMap(), tall: new SvelteMap(), flat: new SvelteMap()
-	};
-	const mergeGroups: Record<Mode, SvelteMap<string, MergeGroup>> = {
-		square: new SvelteMap(), diamond: new SvelteMap(), tall: new SvelteMap(), flat: new SvelteMap()
-	};
-	const colourMaps: Record<Mode, SvelteMap<string, Grain>> = {
-		square: new SvelteMap(), diamond: new SvelteMap(), tall: new SvelteMap(), flat: new SvelteMap()
-	};
+	// Per (mode × orientation) persistence: subdivisions, merges, face colours.
+	// Eight independent state slots, keyed "mode:orientation".
+	function emptyState<V>(): Record<string, SvelteMap<string, V>> {
+		const r: Record<string, SvelteMap<string, V>> = {};
+		for (const m of MODE_IDS) for (const o of ORIENTATIONS) r[stateKeyOf(m, o)] = new SvelteMap<string, V>();
+		return r;
+	}
+	const designs = emptyState<Region>();
+	const mergeGroups = emptyState<MergeGroup>();
+	const colourMaps = emptyState<Grain>();
 	// Transient merge selection (cleared on commit / mode switch).
 	const selection = new SvelteSet<string>();
 
 	let hover = $state<{ x: number; y: number } | null>(null);
-	let svgEl: SVGSVGElement;
 	let gridEl: SVGGElement;
 
 	// ---- Derived ----
-	const board = $derived(buildBoard(mode));
+	const stateKey = $derived(stateKeyOf(mode, orientation) as StateKey);
+	const board = $derived(buildBoard(mode, orientation));
 	const viewBox = $derived(rotatedViewBox(board.w, board.h, rotation, PAD));
+	// viewBox is "minX minY w h"; at actual size the SVG renders at a fixed px/unit.
+	const vbDims = $derived(viewBox.split(' ').map(Number));
+	const pxW = $derived(vbDims[2] * PX_PER_UNIT);
+	const pxH = $derived(vbDims[3] * PX_PER_UNIT);
 	const pivotX = $derived(board.w / 2);
 	const pivotY = $derived(board.h / 2);
 	const rotStep = $derived(rotStepFor(mode));
-	const design = $derived(designs[mode]);
-	const merges = $derived(mergeGroups[mode]);
-	const colours = $derived(colourMaps[mode]);
+	const design = $derived(designs[stateKey]);
+	const merges = $derived(mergeGroups[stateKey]);
+	const colours = $derived(colourMaps[stateKey]);
 	const tools = $derived(toolsForMode(mode));
 
 	function grainFill(g: Grain): string {
@@ -110,6 +120,12 @@
 		selection.clear();
 	}
 
+	function setOrientation(o: Orientation) {
+		if (o === orientation) return;
+		orientation = o;
+		selection.clear();
+	}
+
 	function setEditMode(em: EditMode) {
 		editMode = em;
 		selection.clear();
@@ -129,20 +145,23 @@
 	let fileInput: HTMLInputElement;
 
 	function buildDoc(): DesignDoc {
-		const modes = {} as Record<Mode, LeanMode>;
+		const states: Record<string, LeanMode> = {};
 		for (const m of MODE_IDS) {
-			const cells: Record<string, LeanCell> = {};
-			for (const [id, region] of designs[m]) {
-				const lean = regionToLean(region);
-				if (lean) cells[id] = lean;
+			for (const o of ORIENTATIONS) {
+				const key = stateKeyOf(m, o);
+				const cells: Record<string, LeanCell> = {};
+				for (const [id, region] of designs[key]) {
+					const lean = regionToLean(region);
+					if (lean) cells[id] = lean;
+				}
+				states[key] = {
+					cells,
+					merges: [...mergeGroups[key].values()].map((g) => g.cellIds),
+					colours: Object.fromEntries(colourMaps[key])
+				};
 			}
-			modes[m] = {
-				cells,
-				merges: [...mergeGroups[m].values()].map((g) => g.cellIds),
-				colours: Object.fromEntries(colourMaps[m])
-			};
 		}
-		return { version: DOC_VERSION, modes };
+		return { version: DOC_VERSION, states };
 	}
 
 	function exportDoc() {
@@ -155,34 +174,47 @@
 		URL.revokeObjectURL(url);
 	}
 
-	function loadDoc(doc: DesignDoc): boolean {
-		if (!doc || typeof doc !== 'object' || doc.version !== DOC_VERSION || !doc.modes) return false;
-		for (const m of MODE_IDS) {
-			const lm = doc.modes[m];
-			const board = buildBoard(m);
-			const cellById = new Map(board.cells.map((c) => [c.id, c]));
+	function loadState(m: Mode, o: Orientation, lm: LeanMode | undefined) {
+		const key = stateKeyOf(m, o);
+		const cellById = new Map(buildBoard(m, o).cells.map((c) => [c.id, c]));
 
-			// Mutate the existing reactive maps so the deriveds update.
-			designs[m].clear();
-			mergeGroups[m].clear();
-			colourMaps[m].clear();
+		// Mutate the existing reactive maps so the deriveds update.
+		designs[key].clear();
+		mergeGroups[key].clear();
+		colourMaps[key].clear();
+		if (!lm || typeof lm !== 'object') return;
 
-			if (lm && typeof lm === 'object') {
-				for (const [id, lean] of Object.entries(lm.cells ?? {})) {
-					const cell = cellById.get(id);
-					if (cell && lean && typeof lean.op === 'string') designs[m].set(id, rebuildRegion(cell, lean));
-				}
-				for (const ids of lm.merges ?? []) {
-					const polys = ids.map((id) => cellById.get(id)?.poly).filter((p): p is Pt[] => !!p);
-					if (polys.length === ids.length && ids.length >= 2) {
-						const ring = unionOutline(polys);
-						if (ring) { const id = mergeId(ids); mergeGroups[m].set(id, { id, cellIds: ids, poly: ring }); }
-					}
-				}
-				for (const [id, g] of Object.entries(lm.colours ?? {})) {
-					if (isGrain(g)) colourMaps[m].set(id, g);
-				}
+		for (const [id, lean] of Object.entries(lm.cells ?? {})) {
+			const cell = cellById.get(id);
+			if (cell && lean && typeof lean.op === 'string') designs[key].set(id, rebuildRegion(cell, lean));
+		}
+		for (const ids of lm.merges ?? []) {
+			const polys = ids.map((id) => cellById.get(id)?.poly).filter((p): p is Pt[] => !!p);
+			if (polys.length === ids.length && ids.length >= 2) {
+				const ring = unionOutline(polys);
+				if (ring) { const id = mergeId(ids); mergeGroups[key].set(id, { id, cellIds: ids, poly: ring }); }
 			}
+		}
+		for (const [id, g] of Object.entries(lm.colours ?? {})) {
+			if (isGrain(g)) colourMaps[key].set(id, g);
+		}
+	}
+
+	function loadDoc(doc: any): boolean {
+		if (!doc || typeof doc !== 'object') return false;
+
+		// v2: states keyed "mode:orientation". v1: modes keyed by mode → load as landscape.
+		let states: Record<string, LeanMode> | null = null;
+		if (doc.version === DOC_VERSION && doc.states) {
+			states = doc.states;
+		} else if (doc.version === 1 && doc.modes) {
+			states = {};
+			for (const m of MODE_IDS) if (doc.modes[m]) states[stateKeyOf(m, 'landscape')] = doc.modes[m];
+		}
+		if (!states) return false;
+
+		for (const m of MODE_IDS) {
+			for (const o of ORIENTATIONS) loadState(m, o, states[stateKeyOf(m, o)]);
 		}
 		selection.clear();
 		return true;
@@ -222,18 +254,6 @@
 		} else if (e.key === ']' || e.key === 'ArrowRight') { cycleTool(1); e.preventDefault(); }
 		else if (e.key === '[' || e.key === 'ArrowLeft') { cycleTool(-1); e.preventDefault(); }
 	}
-
-	$effect(() => {
-		const el = svgEl;
-		if (!el) return;
-		const onWheel = (e: WheelEvent) => {
-			if (editMode !== 'subdivide') return;
-			e.preventDefault();
-			cycleTool(e.deltaY > 0 ? 1 : -1);
-		};
-		el.addEventListener('wheel', onWheel, { passive: false });
-		return () => el.removeEventListener('wheel', onWheel);
-	});
 
 	// ---- Hit testing ----
 	function localPoint(e: PointerEvent): { x: number; y: number } {
@@ -385,11 +405,27 @@
 			{/each}
 		</div>
 
+		<div class="orient-toggle">
+			<button class:active={orientation === 'landscape'} onclick={() => setOrientation('landscape')} title="Landscape">
+				<svg width="20" height="16" viewBox="0 0 20 16" aria-hidden="true"><rect x="1.5" y="3.5" width="17" height="9" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5" /></svg>
+				Landscape
+			</button>
+			<button class:active={orientation === 'portrait'} onclick={() => setOrientation('portrait')} title="Portrait">
+				<svg width="16" height="16" viewBox="0 0 16 20" aria-hidden="true"><rect x="3.5" y="1.5" width="9" height="17" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5" /></svg>
+				Portrait
+			</button>
+		</div>
+
 		<div class="rotate-controls">
 			<button onclick={() => rotateBy(-rotStep)} title="Rotate left {rotStep}°">⟲</button>
 			<span class="rot-readout">{rotation}°</span>
 			<button onclick={() => rotateBy(rotStep)} title="Rotate right {rotStep}°">⟳</button>
 			<button class="rot-reset" onclick={resetRotation} disabled={rotation === 0}>Reset</button>
+		</div>
+
+		<div class="zoom-toggle">
+			<button class:active={zoom === 'actual'} onclick={() => (zoom = 'actual')} title="Show cells at a consistent (≈ actual) size; scroll to pan">Actual size</button>
+			<button class:active={zoom === 'fit'} onclick={() => (zoom = 'fit')} title="Scale the whole board to fit">Fit</button>
 		</div>
 
 		<h3>Mode</h3>
@@ -418,8 +454,8 @@
 				{/each}
 			</div>
 			<p class="cycle-note">
-				Click a cell to subdivide it; click a half to split it once more. Keys 1–{tools.length},
-				← →, or scroll to switch tool. Whole resets a cell.
+				Click a cell to subdivide it; click a half to split it once more. Keys 1–{tools.length}
+				or ← → switch tool. Whole resets a cell.
 			</p>
 		{:else if editMode === 'merge'}
 			<h3>Across cells</h3>
@@ -484,12 +520,13 @@
 		</button>
 	</div>
 
-	<div class="board-container">
+	<div class="board-container" class:scroll={zoom === 'actual'}>
 		<svg
-			bind:this={svgEl}
 			{viewBox}
 			class="board"
+			class:fit={zoom === 'fit'}
 			class:merge-mode={editMode === 'merge'}
+			style={zoom === 'actual' ? `width:${pxW}px;height:${pxH}px;` : ''}
 			onpointermove={handleMove}
 			onpointerup={handleClick}
 			onpointerleave={handleLeave}
@@ -546,7 +583,7 @@
 </div>
 
 {#if showPrint}
-	<PrintPreview {board} {mode} {rotation} {design} merges={merges} colours={colours} onClose={() => (showPrint = false)} />
+	<PrintPreview {board} {mode} {orientation} {rotation} {design} merges={merges} colours={colours} onClose={() => (showPrint = false)} />
 {/if}
 
 <style>
@@ -561,7 +598,15 @@
 	.palette h3 { margin: 0 0 0.5rem; font-size: 1rem; color: #333; }
 	.palette h3:not(:first-child) { margin-top: 1.25rem; }
 
-	.mode-pills { display: flex; gap: 0.4rem; margin-bottom: 0.75rem; }
+	.mode-pills { display: flex; gap: 0.4rem; margin-bottom: 0.6rem; }
+
+	.orient-toggle { display: flex; gap: 0.4rem; margin-bottom: 0.75rem; }
+	.orient-toggle button {
+		flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 0.35rem;
+		padding: 0.35rem; font-size: 0.72rem; font-weight: 600; border: 1px solid #ccc;
+		border-radius: 6px; background: white; color: #666; cursor: pointer; transition: all 0.15s;
+	}
+	.orient-toggle button.active { border-color: dodgerblue; background: #e8f0ff; color: #1565c0; }
 	.pill {
 		flex: 1; display: flex; flex-direction: column; align-items: center; gap: 1px;
 		padding: 0.4rem 0.3rem; border: 1px solid #ccc; border-radius: 999px; background: white;
@@ -648,8 +693,21 @@
 		flex: 1; display: flex; align-items: center; justify-content: center; background: white;
 		border-radius: 8px; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1); overflow: hidden;
 	}
-	.board { width: 100%; height: 100%; max-height: 100%; cursor: crosshair; touch-action: none; }
+	/* Actual-size: fixed px board that overflows and scrolls; margin auto keeps it
+	   centred when smaller than the viewport and fully scrollable when larger. */
+	.board-container.scroll { overflow: auto; }
+	.board-container.scroll .board { margin: auto; flex: none; }
+
+	.board { cursor: crosshair; touch-action: none; display: block; }
+	.board.fit { width: 100%; height: 100%; max-height: 100%; }
 	.board.merge-mode { cursor: pointer; }
+
+	.zoom-toggle { display: flex; gap: 0.4rem; margin-top: 0.5rem; }
+	.zoom-toggle button {
+		flex: 1; padding: 0.35rem; font-size: 0.72rem; font-weight: 600; border: 1px solid #ccc;
+		border-radius: 6px; background: white; color: #666; cursor: pointer; transition: all 0.15s;
+	}
+	.zoom-toggle button.active { border-color: dodgerblue; background: #e8f0ff; color: #1565c0; }
 
 	.face { stroke: #bbb; stroke-width: 0.7; }
 	.preview-face { fill: rgba(30, 120, 220, 0.08); stroke: dodgerblue; stroke-width: 1.1; }
