@@ -42,6 +42,8 @@
 	const placedEntries = $derived(Array.from(pieces.entries()));
 
 	// ---- Placement ----
+	// A diamond cell can hold independent sub-pieces (halves, quarters) as long as
+	// their quadrants don't overlap; placing one clears only overlapping pieces.
 	function placeDiamond(i: number, j: number, shape: Shape, grain: Grain) {
 		const prefix = `d:${i},${j}:`;
 		for (const [key, p] of pieces) {
