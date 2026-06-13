@@ -718,14 +718,14 @@
 
 <style>
 	.parquetry-app {
-		display: flex; gap: 1rem; height: 100vh; padding: 1rem; box-sizing: border-box;
-		font-family: system-ui, -apple-system, sans-serif; background: #f8f7f5;
+		display: flex; gap: 1rem; height: 100%; width: 100%; padding: 1rem; box-sizing: border-box;
+		background: var(--color-bg);
 	}
 	.palette {
-		flex: 0 0 280px; background: white; border-radius: 8px; padding: 1rem;
-		box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1); overflow-y: auto;
+		flex: 0 0 280px; background: var(--color-surface); border: 1px solid var(--color-border);
+		border-radius: 8px; padding: 1rem; overflow-y: auto;
 	}
-	.palette h3 { margin: 0 0 0.5rem; font-size: 1rem; color: #333; }
+	.palette h3 { margin: 0 0 0.5rem; font-size: 1rem; color: var(--color-foreground); }
 	.palette h3:not(:first-child) { margin-top: 1.25rem; }
 
 	.mode-pills { display: flex; gap: 0.4rem; margin-bottom: 0.6rem; }
@@ -733,28 +733,28 @@
 	.orient-toggle { display: flex; gap: 0.4rem; margin-bottom: 0.75rem; }
 	.orient-toggle button {
 		flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 0.35rem;
-		padding: 0.35rem; font-size: 0.72rem; font-weight: 600; border: 1px solid #ccc;
-		border-radius: 6px; background: white; color: #666; cursor: pointer; transition: all 0.15s;
+		padding: 0.35rem; font-size: 0.72rem; font-weight: 600; border: 1px solid var(--color-border);
+		border-radius: 6px; background: var(--color-surface); color: var(--color-muted); cursor: pointer; transition: all 0.15s;
 	}
-	.orient-toggle button.active { border-color: dodgerblue; background: #e8f0ff; color: #1565c0; }
+	.orient-toggle button.active { border-color: var(--color-accent); background: color-mix(in oklab, var(--color-accent) 12%, var(--color-surface)); color: var(--color-accent); }
 	.pill {
 		flex: 1; display: flex; flex-direction: column; align-items: center; gap: 1px;
-		padding: 0.4rem 0.3rem; border: 1px solid #ccc; border-radius: 999px; background: white;
+		padding: 0.4rem 0.3rem; border: 1px solid var(--color-border); border-radius: 999px; background: var(--color-surface);
 		cursor: pointer; transition: all 0.15s;
 	}
-	.pill-label { font-size: 0.74rem; font-weight: 600; color: #444; }
-	.pill-sub { font-size: 0.6rem; color: #999; }
-	.pill.active { border-color: dodgerblue; background: #e8f0ff; }
-	.pill.active .pill-label { color: #1565c0; }
-	.pill.active .pill-sub { color: #4a90d9; }
+	.pill-label { font-size: 0.74rem; font-weight: 600; color: var(--color-foreground); }
+	.pill-sub { font-size: 0.6rem; color: var(--color-muted); }
+	.pill.active { border-color: var(--color-accent); background: color-mix(in oklab, var(--color-accent) 12%, var(--color-surface)); }
+	.pill.active .pill-label { color: var(--color-accent); }
+	.pill.active .pill-sub { color: var(--color-accent); }
 
 	.rotate-controls { display: flex; align-items: center; gap: 0.4rem; }
 	.rotate-controls button {
-		padding: 0.35rem 0.6rem; font-size: 1rem; border: 1px solid #ccc; border-radius: 5px;
-		background: white; cursor: pointer; line-height: 1;
+		padding: 0.35rem 0.6rem; font-size: 1rem; border: 1px solid var(--color-border); border-radius: 5px;
+		background: var(--color-surface); color: var(--color-foreground); cursor: pointer; line-height: 1;
 	}
-	.rotate-controls button:hover { background: #f0f0f0; }
-	.rot-readout { min-width: 3rem; text-align: center; font-size: 0.85rem; font-variant-numeric: tabular-nums; color: #444; }
+	.rotate-controls button:hover { background: var(--color-bg); }
+	.rot-readout { min-width: 3rem; text-align: center; font-size: 0.85rem; font-variant-numeric: tabular-nums; color: var(--color-foreground); }
 	.rot-reset { margin-left: auto; font-size: 0.72rem !important; padding: 0.35rem 0.5rem !important; }
 	.rot-reset:disabled { opacity: 0.4; cursor: default; }
 
@@ -762,13 +762,13 @@
 	.editmode-toggle button {
 		display: flex; align-items: baseline; justify-content: space-between; gap: 0.5rem;
 		width: 100%; padding: 0.5rem 0.7rem; font-size: 0.82rem; font-weight: 600;
-		border: 1px solid #ccc; border-radius: 6px; background: white; color: #555;
+		border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-surface); color: var(--color-muted);
 		cursor: pointer; transition: all 0.15s; text-align: left;
 	}
-	.editmode-toggle .em-axis { font-size: 0.62rem; font-weight: 500; color: #aaa; }
-	.editmode-toggle button.active { border-color: dodgerblue; background: #e8f0ff; color: #1565c0; }
-	.editmode-toggle button.active .em-axis { color: #7aa7e0; }
-	.key-hint { margin: 0.4rem 0 0; font-size: 0.66rem; color: #aaa; text-align: center; }
+	.editmode-toggle .em-axis { font-size: 0.62rem; font-weight: 500; color: var(--color-muted); }
+	.editmode-toggle button.active { border-color: var(--color-accent); background: color-mix(in oklab, var(--color-accent) 12%, var(--color-surface)); color: var(--color-accent); }
+	.editmode-toggle button.active .em-axis { color: var(--color-accent); }
+	.key-hint { margin: 0.4rem 0 0; font-size: 0.66rem; color: var(--color-muted); text-align: center; }
 
 	.swatch-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.4rem; }
 	.swatch {
@@ -778,8 +778,8 @@
 	}
 	.swatch span { font-size: 0.6rem; color: #777; }
 	.swatch:hover { background: #ece6db; }
-	.swatch.active { border-color: dodgerblue; background: #e8f0ff; }
-	.swatch.active span { color: #1565c0; }
+	.swatch.active { border-color: var(--color-accent); background: color-mix(in oklab, var(--color-accent) 10%, #f5f2ec); }
+	.swatch.active span { color: var(--color-accent); }
 
 	.tool-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.35rem; }
 	.tool-btn {
@@ -789,11 +789,11 @@
 	}
 	.tool-btn span { font-size: 0.62rem; color: #777; }
 	.tool-btn:hover { background: #ece6db; }
-	.tool-btn.active { border-color: dodgerblue; background: #e8f0ff; }
-	.tool-btn.active span { color: #1565c0; }
+	.tool-btn.active { border-color: var(--color-accent); background: color-mix(in oklab, var(--color-accent) 10%, #f5f2ec); }
+	.tool-btn.active span { color: var(--color-accent); }
 
-	.cycle-note { margin: 0.6rem 0 0; font-size: 0.7rem; color: #999; line-height: 1.5; }
-	.warn { margin: 0.5rem 0 0; font-size: 0.7rem; color: #c67; line-height: 1.4; }
+	.cycle-note { margin: 0.6rem 0 0; font-size: 0.7rem; color: var(--color-muted); line-height: 1.5; }
+	.warn { margin: 0.5rem 0 0; font-size: 0.7rem; color: var(--color-red); line-height: 1.4; }
 
 	.merge-actions { display: flex; flex-direction: column; gap: 0.4rem; margin-top: 0.75rem; }
 	.btn-merge {
@@ -802,8 +802,8 @@
 	}
 	.btn-merge:disabled { background: #d8cfc4; color: #fff; cursor: default; }
 	.btn-ghost {
-		padding: 0.4rem; font-size: 0.72rem; border: 1px solid #ccc; border-radius: 5px;
-		background: white; color: #666; cursor: pointer;
+		padding: 0.4rem; font-size: 0.72rem; border: 1px solid var(--color-border); border-radius: 5px;
+		background: var(--color-surface); color: var(--color-muted); cursor: pointer;
 	}
 	.btn-ghost:disabled { opacity: 0.4; cursor: default; }
 
@@ -811,18 +811,18 @@
 	.io-actions { display: flex; gap: 0.5rem; margin-top: 0.5rem; }
 	.io-actions .btn-ghost { flex: 1; text-align: center; }
 	.btn-clear {
-		flex: 1; padding: 0.4rem 0.5rem; font-size: 0.75rem; border: 1px solid #c33; border-radius: 4px;
-		cursor: pointer; background: white; color: #c33; text-transform: capitalize;
+		flex: 1; padding: 0.4rem 0.5rem; font-size: 0.75rem; border: 1px solid var(--color-red); border-radius: 4px;
+		cursor: pointer; background: var(--color-surface); color: var(--color-red); text-transform: capitalize;
 	}
-	.btn-clear:hover { background: #fef0f0; }
+	.btn-clear:hover { background: color-mix(in oklab, var(--color-red) 10%, var(--color-surface)); }
 
 	.btn-print {
 		width: 100%; margin-top: 0.6rem; padding: 0.6rem; display: inline-flex; align-items: center;
 		justify-content: center; gap: 0.4rem; font-size: 0.82rem; font-weight: 600; border: none;
-		border-radius: 6px; background: #1565c0; color: white; cursor: pointer;
-		box-shadow: 0 1px 3px rgba(21, 101, 192, 0.35);
+		border-radius: 6px; background: var(--color-accent); color: #fff; cursor: pointer;
+		box-shadow: 0 1px 3px color-mix(in oklab, var(--color-accent) 40%, transparent);
 	}
-	.btn-print:hover { background: #0f4c98; }
+	.btn-print:hover { background: color-mix(in oklab, #000 12%, var(--color-accent)); }
 
 	.board-container {
 		flex: 1; display: flex; align-items: center; justify-content: center; background: white;
@@ -839,20 +839,20 @@
 
 	.zoom-toggle { display: flex; gap: 0.4rem; margin-top: 0.5rem; }
 	.zoom-toggle button {
-		flex: 1; padding: 0.35rem; font-size: 0.72rem; font-weight: 600; border: 1px solid #ccc;
-		border-radius: 6px; background: white; color: #666; cursor: pointer; transition: all 0.15s;
+		flex: 1; padding: 0.35rem; font-size: 0.72rem; font-weight: 600; border: 1px solid var(--color-border);
+		border-radius: 6px; background: var(--color-surface); color: var(--color-muted); cursor: pointer; transition: all 0.15s;
 	}
-	.zoom-toggle button.active { border-color: dodgerblue; background: #e8f0ff; color: #1565c0; }
+	.zoom-toggle button.active { border-color: var(--color-accent); background: color-mix(in oklab, var(--color-accent) 12%, var(--color-surface)); color: var(--color-accent); }
 
 	.face { stroke: #bbb; stroke-width: 0.7; }
-	.preview-face { fill: rgba(30, 120, 220, 0.08); stroke: dodgerblue; stroke-width: 1.1; }
-	.preview-face-active { fill: rgba(30, 120, 220, 0.26); stroke: dodgerblue; stroke-width: 1.1; }
+	.preview-face { fill: rgba(46, 110, 78, 0.08); stroke: #2e6e4e; stroke-width: 1.1; }
+	.preview-face-active { fill: rgba(46, 110, 78, 0.26); stroke: #2e6e4e; stroke-width: 1.1; }
 	.preview-reset { fill: rgba(200, 60, 60, 0.06); stroke: #c33; stroke-width: 1.1; stroke-dasharray: 3 2; }
 
 	.sel { fill: rgba(107, 68, 35, 0.28); stroke: #6b4423; stroke-width: 1; }
 	.sel-hover { fill: rgba(107, 68, 35, 0.1); stroke: #6b4423; stroke-width: 0.8; stroke-dasharray: 2 2; }
 	.sel-union { fill: none; stroke: #6b4423; stroke-width: 1.8; }
-	.colour-hover { opacity: 0.55; stroke: dodgerblue; stroke-width: 1.3; }
+	.colour-hover { opacity: 0.55; stroke: #2e6e4e; stroke-width: 1.3; }
 
 	@media (max-width: 700px) {
 		.parquetry-app { flex-direction: column; height: auto; }

@@ -1,1 +1,54 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,400;0,500;1,400;1,500&family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400..700&display=swap');
 @import 'tailwindcss';
+
+@theme {
+	--font-sans: 'DM Sans', sans-serif;
+	--font-mono: 'DM Mono', monospace;
+
+	--color-surface: #ffffff;
+	--color-bg: #f5f4f0;
+	--color-border: #d8d6d0;
+	--color-muted: #5c5a55;
+	--color-foreground: #1a1917;
+	--color-green: #2d9e6b;
+	--color-yellow: #d4920a;
+	--color-red: #cc3f3f;
+	--color-interactive: #3b5bdb;
+	--color-accent: #2e6e4e;
+}
+
+:root {
+	--color-surface: #ffffff;
+	--color-bg: #f5f4f0;
+	--color-border: #d8d6d0;
+	--color-muted: #5c5a55;
+	--color-foreground: #1a1917;
+	--color-green: #2d9e6b;
+	--color-yellow: #d4920a;
+	--color-red: #cc3f3f;
+	--color-interactive: #3b5bdb;
+	--color-accent: #2e6e4e;
+}
+
+.dark {
+	--color-surface: #242428;
+	--color-bg: #1a1917;
+	--color-border: rgba(255, 255, 255, 0.08);
+	--color-muted: #9a9790;
+	--color-foreground: #f0ede8;
+	--color-green: #2d9e6b;
+	--color-yellow: #d4920a;
+	--color-red: #cc3f3f;
+	--color-interactive: #3b5bdb;
+	--color-accent: #4a9e6e;
+}
+
+body {
+	margin: 0;
+	overflow: hidden;
+	font-family: var(--font-sans);
+	background: var(--color-bg);
+	color: var(--color-foreground);
+	-webkit-font-smoothing: antialiased;
+	text-rendering: optimizeLegibility;
+}

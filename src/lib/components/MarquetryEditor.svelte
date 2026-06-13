@@ -231,11 +231,11 @@
 			{/each}
 
 			{#if targetFace}
-				<polygon points={pstr(targetFace)} fill="rgba(30,120,220,0.07)" stroke="dodgerblue" stroke-width="0.5" stroke-dasharray="2 2" pointer-events="none" />
+				<polygon points={pstr(targetFace)} fill="rgba(46,110,78,0.08)" stroke="#2e6e4e" stroke-width="0.5" stroke-dasharray="2 2" pointer-events="none" />
 			{/if}
 
 			{#each seams as s, i (i)}
-				<polyline points={pstr(s)} fill="none" stroke="#378ADD" stroke-width="0.9" />
+				<polyline points={pstr(s)} fill="none" stroke="#2e6e4e" stroke-width="0.9" />
 			{/each}
 
 			{#if showLandmarks}
@@ -249,16 +249,16 @@
 			{#if livePreview}
 				{#if livePreview.kind === 'line'}
 					<line x1={livePreview.a[0]} y1={livePreview.a[1]} x2={livePreview.b[0]} y2={livePreview.b[1]}
-						stroke={livePreview.ok ? '#1D9E75' : '#E24B4A'} stroke-width="1" />
+						stroke={livePreview.ok ? '#2e6e4e' : '#cc3f3f'} stroke-width="1" />
 				{:else}
 					<polyline points={pstr(livePreview.pts)} fill="none"
-						stroke={livePreview.ok ? '#1D9E75' : '#E24B4A'} stroke-width="1.1" />
-					<circle cx={livePreview.c[0]} cy={livePreview.c[1]} r="1.4" fill={livePreview.ok ? '#1D9E75' : '#E24B4A'} />
+						stroke={livePreview.ok ? '#2e6e4e' : '#cc3f3f'} stroke-width="1.1" />
+					<circle cx={livePreview.c[0]} cy={livePreview.c[1]} r="1.4" fill={livePreview.ok ? '#2e6e4e' : '#cc3f3f'} />
 				{/if}
 			{/if}
 
-			{#if A}<circle cx={A[0]} cy={A[1]} r="1.3" fill="#378ADD" />{/if}
-			{#if B && phase === 'curveC'}<circle cx={B[0]} cy={B[1]} r="1.3" fill="#378ADD" />{/if}
+			{#if A}<circle cx={A[0]} cy={A[1]} r="1.3" fill="#2e6e4e" />{/if}
+			{#if B && phase === 'curveC'}<circle cx={B[0]} cy={B[1]} r="1.3" fill="#2e6e4e" />{/if}
 			{#if cand && (phase === 'idleA' || phase === 'placedA')}
 				<circle cx={cand.p[0]} cy={cand.p[1]} r="1.8" fill="none" stroke={COL[cand.type]} stroke-width="1" />
 			{/if}
@@ -278,7 +278,7 @@
 	}
 	.mq-back { font-weight: 600; }
 	.mq-seg { display: flex; gap: 0.3rem; }
-	.mq-seg button.active, .mq-snap.active { border-color: dodgerblue; background: #e8f0ff; color: #1565c0; }
+	.mq-seg button.active, .mq-snap.active { border-color: #2e6e4e; background: #eaf3ee; color: #2e6e4e; }
 	.mq-cancel { color: #c33; border-color: #e0b4b4; }
 	.mq-hint { margin-left: auto; color: #999; }
 	.mq-canvas { flex: 1; display: flex; align-items: center; justify-content: center; min-height: 0; }
